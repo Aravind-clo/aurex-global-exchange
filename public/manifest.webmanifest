@@ -1,0 +1,32 @@
+{
+  "name": "Meridian Markets",
+  "short_name": "Meridian",
+  "description": "Global multi-market execution terminal for Crypto, India NSE/BSE, US, Europe, Asia Equities & Forex.",
+  "theme_color": "#0B111E",
+  "background_color": "#0B111E",
+  "display": "standalone",
+  "orientation": "any",
+  "scope": "/",
+  "start_url": "/",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+Contact: mailto:security@aurexglobalexchange.com
+Contact: mailto:founder@aurexglobalexchange.com
+Expires: 2028-01-01T00:00:00.000Z
+Preferred-Languages: en
+Policy: /SECURITY.md
+Acknowledgments: /#security-hall-of-fame

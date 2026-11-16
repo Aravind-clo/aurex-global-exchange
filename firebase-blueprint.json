@@ -1,0 +1,180 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Non-PII workspace profile and preferences for an authenticated Meridian trader",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the account owner"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Display name shown on the trading desk"
+        },
+        "marketFocus": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "description": "Primary asset class or regional market focus"
+        },
+        "experienceMode": {
+          "type": "string",
+          "enum": ["newbie", "pro"],
+          "description": "UI guidance level"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of profile creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["uid", "displayName", "marketFocus", "experienceMode", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Owner-isolated PII record containing verified email and desk contact metadata",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160,
+          "description": "Verified account email address"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "WatchlistItem": {
+      "title": "WatchlistItem",
+      "description": "User-pinned market instrument inside a personal watchlist",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching the parent user document"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9.\\-]+$",
+          "description": "Instrument ticker symbol"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 240,
+          "description": "Optional trade thesis note"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": ["ownerId", "symbol", "createdAt", "updatedAt"]
+    },
+    "DeskAlert": {
+      "title": "DeskAlert",
+      "description": "User-configured real-time price alert rule",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the alert owner"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9.\\-]+$",
+          "description": "Target instrument ticker"
+        },
+        "condition": {
+          "type": "string",
+          "enum": ["above", "below"],
+          "description": "Trigger direction"
+        },
+        "targetPrice": {
+          "type": "number",
+          "description": "Trigger price threshold"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "triggered"],
+          "description": "Alert lifecycle status (triggered is terminal)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": ["ownerId", "symbol", "condition", "targetPrice", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-scoped non-PII user trading desk profile"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Owner-isolated PII subcollection holding verified email"
+    },
+    "/users/{userId}/watchlists/{itemId}": {
+      "schema": { "$ref": "#/entities/WatchlistItem" },
+      "description": "Personal watchlist items synchronized across Android, iOS, macOS, and Windows"
+    },
+    "/users/{userId}/alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/DeskAlert" },
+      "description": "User price alert rules with terminal triggered locking"
+    }
+  }
+}
