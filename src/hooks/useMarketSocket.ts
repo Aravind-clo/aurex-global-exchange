@@ -13,6 +13,7 @@ import type {
   BankAccountRecord,
   BankRailType,
   BotStrategyType,
+  BugBountySubmission,
   Candle,
   CcxtConnectorStatus,
   ChartTimeframe,
@@ -23,11 +24,14 @@ import type {
   DiagnosticsReport,
   EncryptedNetworkTelemetry,
   EngineMetrics,
+  EnterpriseSecuritySnapshot,
   FirewallIncident,
   FounderAiTeamState,
   GlobalBankDirectoryEntry,
   GlobalMonitorSnapshot,
   HackDefenseAgent,
+  HsmAttestationResult,
+  HsmKeySlot,
   Instrument,
   InvestorProfile,
   KycDocumentType,
@@ -41,6 +45,7 @@ import type {
   Order,
   OrderBook,
   PasskeyCredentialInfo,
+  PentestReport,
   Position,
   PriceAlert,
   ReferralPromoProfile,
@@ -54,6 +59,7 @@ import type {
   TotpEnrollmentSetup,
   TradeTapeItem,
   TradingBotRecord,
+  TrustedDeviceRecord,
   UserRewardsState,
   VaultTransferRecord,
   WsClientMessage,
@@ -62,6 +68,11 @@ import type {
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleAuthProvider, syncFirebaseUserProfile } from '../lib/firebase';
 import { createEncryptedEnvelopeHeader, setActiveMeshKeyId } from '../utils/clientCrypto';
+import {
+  ensureCryptographicDeviceFingerprint,
+  getCachedDeviceFingerprint,
+  getDeviceLabel,
+} from '../utils/deviceFingerprint';
 
 function b64UrlToUint8Array(b64Url: string): Uint8Array<ArrayBuffer> {
   const pad = '='.repeat((4 - (b64Url.length % 4)) % 4);
@@ -104,11 +115,21 @@ function storeBearerToken(token?: string | null) {
   }
 }
 
+if (typeof window !== 'undefined') {
+  void ensureCryptographicDeviceFingerprint();
+}
+
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token = getStoredBearerToken();
   const headers = new Headers(init.headers);
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (!headers.has('X-Aurex-Device-Fp')) {
+    headers.set('X-Aurex-Device-Fp', getCachedDeviceFingerprint());
+  }
+  if (!headers.has('X-Aurex-Device-Label')) {
+    headers.set('X-Aurex-Device-Label', getDeviceLabel());
   }
   return fetch(input, { ...init, headers, credentials: 'same-origin' });
 }
@@ -323,6 +344,7 @@ export function useMarketSocket() {
   const [socialGraph, setSocialGraph] = useState<SocialGraphState | null>(null);
   const [founderAiTeam, setFounderAiTeam] = useState<FounderAiTeamState | null>(null);
   const [adminRewards, setAdminRewards] = useState<AdminRewardsOverview | null>(null);
+  const [enterpriseSecurity, setEnterpriseSecurity] = useState<EnterpriseSecuritySnapshot | null>(null);
   const [toasts, setToasts] = useState<AlertToast[]>([]);
 
   const pushToast = useCallback((toast: Omit<AlertToast, 'id' | 'createdAt'>) => {
@@ -2255,6 +2277,18 @@ export function useMarketSocket() {
     }
   }, []);
 
+  const fetchEnterpriseSecurity = useCallback(async () => {
+    try {
+      await ensureCryptographicDeviceFingerprint();
+      const res = await authFetch('/api/v1/security/enterprise-suite');
+      if (!res.ok) return;
+      const data = (await res.json()) as { snapshot?: EnterpriseSecuritySnapshot };
+      if (data.snapshot) setEnterpriseSecurity(data.snapshot);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     const isFounder =
       authUser?.email.trim().toLowerCase() === 'vemulavankeswararao@gmail.com' &&
@@ -2262,6 +2296,7 @@ export function useMarketSocket() {
     if (authUser?.id) {
       void fetchRewardsAndSocial();
       void fetchBots();
+      void fetchEnterpriseSecurity();
       void authFetch('/api/v1/promo/me')
         .then(async (res) => {
           if (!res.ok) return;
@@ -2274,6 +2309,7 @@ export function useMarketSocket() {
       setBots([]);
       setRewardsState(null);
       setSocialGraph(null);
+      setEnterpriseSecurity(null);
     }
 
     if (isFounder) {
@@ -2305,6 +2341,7 @@ export function useMarketSocket() {
     fetchAdminRewards,
     fetchRewardsAndSocial,
     fetchBots,
+    fetchEnterpriseSecurity,
     checkAuthServerHealth,
   ]);
 
@@ -3113,6 +3150,183 @@ export function useMarketSocket() {
     [pushToast]
   );
 
+  const trustDevice = useCallback(
+    async (deviceId: string, status: 'TRUSTED' | 'REVOKED' = 'TRUSTED'): Promise<{ ok: boolean; device?: TrustedDeviceRecord }> => {
+      try {
+        const res = await authFetch(`/api/v1/security/devices/${encodeURIComponent(deviceId)}/trust`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        const data = (await res.json()) as { ok?: boolean; device?: TrustedDeviceRecord; error?: string };
+        if (res.ok && data.device) {
+          void fetchEnterpriseSecurity();
+          pushToast({
+            title: status === 'TRUSTED' ? 'Device Fingerprint Trusted' : 'Device Fingerprint Revoked',
+            detail: `${data.device.label} updated in Chronos-BruteShield registry.`,
+            tone: status === 'TRUSTED' ? 'positive' : 'negative',
+          });
+          return { ok: true, device: data.device };
+        }
+        return { ok: false };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [fetchEnterpriseSecurity, pushToast]
+  );
+
+  const revokeDevice = useCallback(
+    async (deviceId: string): Promise<{ ok: boolean }> => {
+      try {
+        const res = await authFetch(`/api/v1/security/devices/${encodeURIComponent(deviceId)}`, {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          void fetchEnterpriseSecurity();
+          pushToast({
+            title: 'Device Revoked',
+            detail: 'Hardware device fingerprint removed from trusted allowlist.',
+            tone: 'info',
+          });
+          return { ok: true };
+        }
+        return { ok: false };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [fetchEnterpriseSecurity, pushToast]
+  );
+
+  const signHsmAttestation = useCallback(
+    async (subject?: string): Promise<{ ok: boolean; attestation?: HsmAttestationResult }> => {
+      try {
+        const res = await authFetch('/api/v1/security/hsm/sign-attestation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subject }),
+        });
+        const data = (await res.json()) as { ok?: boolean; attestation?: HsmAttestationResult };
+        if (res.ok && data.attestation) {
+          void fetchEnterpriseSecurity();
+          pushToast({
+            title: 'HSM ECDSA-P384 Attestation Signed',
+            detail: `Proof ${data.attestation.attestationId} verified in hardware enclave.`,
+            tone: 'positive',
+          });
+          return { ok: true, attestation: data.attestation };
+        }
+        return { ok: false };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [fetchEnterpriseSecurity, pushToast]
+  );
+
+  const rotateHsmSlot = useCallback(
+    async (slotId: string): Promise<{ ok: boolean; slot?: HsmKeySlot }> => {
+      try {
+        const res = await authFetch('/api/v1/security/hsm/rotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slotId }),
+        });
+        const data = (await res.json()) as { ok?: boolean; slot?: HsmKeySlot };
+        if (res.ok && data.slot) {
+          void fetchEnterpriseSecurity();
+          pushToast({
+            title: `HSM Key Rotated · Epoch #${data.slot.epoch}`,
+            detail: `${data.slot.slotId} rotated (${data.slot.publicKeyFingerprint}).`,
+            tone: 'positive',
+          });
+          return { ok: true, slot: data.slot };
+        }
+        return { ok: false };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [fetchEnterpriseSecurity, pushToast]
+  );
+
+  const submitBugBounty = useCallback(
+    async (payload: {
+      title: string;
+      severity: BugBountySubmission['severity'];
+      component: string;
+      description: string;
+      reproductionSteps: string;
+    }): Promise<{ ok: boolean; error?: string; submission?: BugBountySubmission }> => {
+      try {
+        const res = await authFetch('/api/v1/security/bounty/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as { ok?: boolean; submission?: BugBountySubmission; error?: string };
+        if (!res.ok || !data.submission) {
+          return { ok: false, error: data.error ?? 'Could not submit bug bounty report.' };
+        }
+        void fetchEnterpriseSecurity();
+        pushToast({
+          title: `Bug Bounty Ticket ${data.submission.ticketCode}`,
+          detail: `${data.submission.severity} report triaged (${data.submission.rewardBandUsd}).`,
+          tone: 'positive',
+        });
+        return { ok: true, submission: data.submission };
+      } catch {
+        return { ok: false, error: 'Network error submitting bug bounty report.' };
+      }
+    },
+    [fetchEnterpriseSecurity, pushToast]
+  );
+
+  const runAutomatedPentest = useCallback(async (): Promise<{ ok: boolean; report?: PentestReport }> => {
+    try {
+      const res = await authFetch('/api/v1/security/pentest/run', { method: 'POST' });
+      const data = (await res.json()) as { ok?: boolean; report?: PentestReport };
+      if (res.ok && data.report) {
+        void fetchEnterpriseSecurity();
+        pushToast({
+          title: `Automated Pentest ${data.report.scorePct}% Pass`,
+          detail: `${data.report.passedVectors}/${data.report.totalVectors} live attack vectors neutralized.`,
+          tone: data.report.failedVectors === 0 ? 'positive' : 'negative',
+        });
+        return { ok: true, report: data.report };
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }, [fetchEnterpriseSecurity, pushToast]);
+
+  const downloadSanitizedPolicyBundle = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await authFetch('/api/v1/system/export-policy-bundle');
+      if (!res.ok) return false;
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'SECURITY_AND_SYSTEM_POLICY.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      pushToast({
+        title: 'Sanitized Architecture & Policy Exported',
+        detail: 'Downloaded SECURITY_AND_SYSTEM_POLICY.md with all private keys & secrets redacted.',
+        tone: 'positive',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [pushToast]);
+
   return {
     connected,
     reconnecting,
@@ -3260,5 +3474,14 @@ export function useMarketSocket() {
     createAdminRewardCampaign,
     toggleAdminRewardCampaign,
     grantAdminReward,
+    enterpriseSecurity,
+    fetchEnterpriseSecurity,
+    trustDevice,
+    revokeDevice,
+    signHsmAttestation,
+    rotateHsmSlot,
+    submitBugBounty,
+    runAutomatedPentest,
+    downloadSanitizedPolicyBundle,
   };
 }

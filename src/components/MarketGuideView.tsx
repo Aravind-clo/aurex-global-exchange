@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { ArrowUpRight, BookOpen, FileText, Globe, HelpCircle, Search, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Download, FileText, Globe, HelpCircle, Search, ShieldCheck, TrendingUp } from 'lucide-react';
 import type { CountryGuideline } from '../types/market';
 
 interface MarketGuideViewProps {
   countryGuidelines?: CountryGuideline[];
-  onNavigate: (view: 'screener' | 'terminal' | 'overview' | 'vault' | 'guide') => void;
+  onNavigate: (view: 'screener' | 'terminal' | 'overview' | 'vault' | 'guide' | 'profile' | 'bots') => void;
   onOpenSampleTrade: (symbol: string) => void;
+  onDownloadPolicyBundle?: () => Promise<boolean>;
 }
 
 interface GlossaryEntry {
@@ -70,11 +71,13 @@ export function MarketGuideView({
   countryGuidelines = [],
   onNavigate,
   onOpenSampleTrade,
+  onDownloadPolicyBundle,
 }: MarketGuideViewProps) {
-  const [activeTab, setActiveTab] = useState<'guide' | 'glossary' | 'compliance' | 'legal'>('guide');
+  const [activeTab, setActiveTab] = useState<'guide' | 'skills' | 'glossary' | 'compliance' | 'legal'>('guide');
   const [category, setCategory] = useState<'All' | GlossaryEntry['category']>('All');
   const [search, setSearch] = useState('');
   const [countrySearch, setCountrySearch] = useState('');
+  const [exportBusy, setExportBusy] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -135,7 +138,7 @@ export function MarketGuideView({
           </p>
         </div>
 
-        <div className="flex items-center p-1 rounded-lg bg-slate-100 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139] text-xs">
+        <div className="flex flex-wrap items-center p-1 rounded-lg bg-slate-100 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139] text-xs">
           <button
             type="button"
             onClick={() => setActiveTab('guide')}
@@ -147,6 +150,18 @@ export function MarketGuideView({
           >
             <HelpCircle className="w-3.5 h-3.5" />
             Beginner Guide
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('skills')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'skills'
+                ? 'bg-[#F0B90B] text-[#0B0E11] font-semibold'
+                : 'text-slate-600 dark:text-[#848E9C] hover:text-slate-900 dark:hover:text-[#EAECEF]'
+            }`}
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            Day-Trading Skills
           </button>
           <button
             type="button"
@@ -222,6 +237,87 @@ export function MarketGuideView({
                 >
                   {w.actionLabel}
                   <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'skills' && (
+        <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-[#2B3139]">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                Day-Trading Skill Playbook &amp; Genesis Chart Framework
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-[#848E9C]">
+                Master intraday execution using built-in technical overlays (EMA 9/21, VWAP, Bollinger Bands, RSI-14, Fibonacci) and the 24-Agent Risk Gate.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenSampleTrade('BTC-USD')}
+              className="px-3 py-1.5 text-xs font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11]"
+            >
+              Launch Live Terminal →
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            {[
+              {
+                skill: 'Skill 01 · Genesis ALL & Multi-Timeframe Context',
+                setup: 'Switch chart timeframe to ALL (Genesis Launch History) -> 1D -> 15m -> 1m/5m.',
+                execution:
+                  'Map macro historical structural pivots on ALL/1D before zooming into 5m/15m intraday liquidity pools. Never short directly into macro structural support.',
+                cta: 'Inspect Genesis Chart',
+                action: () => onOpenSampleTrade('BTC-USD'),
+              },
+              {
+                skill: 'Skill 02 · VWAP + EMA 9/21 Momentum Pullback',
+                setup: 'Enable EMA + VWAP overlays on Trade Chart and filter for assets with Bid Skew > +10%.',
+                execution:
+                  'Wait for EMA-9 to cross above EMA-21 above session VWAP. Enter on pullback touch to VWAP with Stop-Loss 1.2x ATR below swing low and Take-Profit at 2.2R.',
+                cta: 'Practice on NVDA',
+                action: () => onOpenSampleTrade('NVDA'),
+              },
+              {
+                skill: 'Skill 03 · RSI-14 & Bollinger 2-Sigma Mean Reversion',
+                setup: 'Enable Bollinger Bands + RSI sub-pane on choppy FX or range-bound large caps.',
+                execution:
+                  'Look for lower Bollinger band pierce paired with RSI-14 < 30 flattening. Scale with Smart Bots (MEAN_REVERSION_BB or GRID) with strict max drawdown caps.',
+                cta: 'Open Smart Bots',
+                action: () => onNavigate('bots'),
+              },
+              {
+                skill: 'Skill 04 · Paper-to-Real Graduation & Capital Discipline',
+                setup: 'Complete 20+ Demo Paper trades -> Verify Tier 2 KYC + Payment Rail in Profile -> Lock reserve in Cold Vault.',
+                execution:
+                  'Risk max 1% of desk equity per trade. Keep excess Real capital isolated inside 2FA Cold Vault Shield so active execution exposure stays strictly bounded.',
+                cta: 'Open Profile & Verification',
+                action: () => onNavigate('profile'),
+              },
+            ].map((item) => (
+              <div
+                key={item.skill}
+                className="p-4 rounded-lg border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 space-y-2"
+              >
+                <div className="font-mono font-semibold text-[#D9A70A] dark:text-[#F0B90B]">
+                  {item.skill}
+                </div>
+                <div className="text-slate-800 dark:text-[#EAECEF]">
+                  <strong>Setup:</strong> {item.setup}
+                </div>
+                <p className="text-slate-600 dark:text-[#B7BDC6] leading-relaxed">
+                  {item.execution}
+                </p>
+                <button
+                  type="button"
+                  onClick={item.action}
+                  className="inline-flex items-center gap-1 font-semibold text-[#0ECB81] hover:underline pt-1"
+                >
+                  {item.cta} <ArrowUpRight className="w-3 h-3" />
                 </button>
               </div>
             ))}
@@ -401,6 +497,26 @@ export function MarketGuideView({
             <p>
               <strong className="text-slate-900 dark:text-[#EAECEF]">4. Smart Bots, Rewards &amp; Anti-Exploit Protection:</strong> Quantitative bots, OCO/trailing orders, XP quests, and X25519 network tools operate strictly AS-IS with zero profit warranty. Sybil farming, unauthorized key probing, or sanctions violations cause immediate reward forfeiture and permanent quarantine; Force Majeure and severability survive termination.
             </p>
+            <p>
+              <strong className="text-slate-900 dark:text-[#EAECEF]">5. Sovereign Continuity, Zero Copyrights &amp; Exportable Policy:</strong> Aurex owns 100% original canvas charts, indicators, and branding with zero watermarks or infringing marks. Multi-region stateless DNS/origin support ensures uninterrupted software continuity across mirrors, and users may export the sanitized full security &amp; policy bundle anytime.
+            </p>
+            {onDownloadPolicyBundle && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={async () => {
+                    setExportBusy(true);
+                    await onDownloadPolicyBundle();
+                    setExportBusy(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {exportBusy ? 'Generating Bundle…' : 'Download Single-File Architecture & Policy (.md)'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

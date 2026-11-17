@@ -38,6 +38,7 @@ import { GlobalMonitorView } from './components/GlobalMonitorView';
 import { SecurityVaultView } from './components/SecurityVaultView';
 import { AdminConsoleView } from './components/AdminConsoleView';
 import { InvestorProfilesView } from './components/InvestorProfilesView';
+import { UserProfileView } from './components/UserProfileView';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { AiAssistantDrawer } from './components/AiAssistantDrawer';
 import { LegalModal } from './components/LegalModal';
@@ -58,6 +59,7 @@ type WorkspaceView =
   | 'monitor'
   | 'overview'
   | 'investors'
+  | 'profile'
   | 'vault'
   | 'guide'
   | 'admin';
@@ -199,6 +201,14 @@ export default function App() {
     createAdminRewardCampaign,
     toggleAdminRewardCampaign,
     grantAdminReward,
+    enterpriseSecurity,
+    trustDevice,
+    revokeDevice,
+    signHsmAttestation,
+    rotateHsmSlot,
+    submitBugBounty,
+    runAutomatedPentest,
+    downloadSanitizedPolicyBundle,
   } = useMarketSocket();
 
   const [view, setView] = useState<WorkspaceView>('terminal');
@@ -418,6 +428,7 @@ export default function App() {
     { id: 'monitor', label: 'Global Monitor', icon: Globe },
     { id: 'overview', label: 'AI Signals & News', icon: Activity },
     { id: 'investors', label: 'Investors & KYC', icon: UserCheck },
+    { id: 'profile', label: 'Profile & Verify', icon: User },
     { id: 'vault', label: 'Wallet & Vault', icon: Wallet },
     { id: 'guide', label: 'Help & Rules', icon: HelpCircle },
     ...(isFounderAdmin
@@ -499,7 +510,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex bg-slate-50 dark:bg-[#0B0E11] text-slate-900 dark:text-[#EAECEF]">
+    <div className="min-h-screen flex bg-slate-50 dark:bg-[#0e0e0e] text-slate-900 dark:text-[#EAECEF]">
       {/* Mobile Sidebar Backdrop */}
       {mobileNavOpen && (
         <div
@@ -604,7 +615,14 @@ export default function App() {
         {/* Sidebar Footer */}
         <div className="p-3 border-t border-slate-200 dark:border-[#2B3139] space-y-2.5 text-xs">
           <div className="flex items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => {
+                setView('profile');
+                setMobileNavOpen(false);
+              }}
+              className="flex items-center gap-2 min-w-0 text-left hover:opacity-85 transition-opacity"
+            >
               <User className="w-3.5 h-3.5 text-[#F0B90B] shrink-0" />
               <div className="min-w-0">
                 <div className="font-semibold text-slate-900 dark:text-[#EAECEF] truncate">
@@ -614,7 +632,7 @@ export default function App() {
                   {authUser.email}
                 </div>
               </div>
-            </div>
+            </button>
             <button
               type="button"
               onClick={() => void logoutAccount()}
@@ -738,6 +756,22 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => setView('profile')}
+              className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap shrink-0 transition-colors ${
+                kycRecord?.status === 'VERIFIED' && bankAccounts.length > 0
+                  ? 'border-slate-200 dark:border-[#2B3139] text-slate-700 dark:text-[#EAECEF] hover:bg-slate-100 dark:hover:bg-[#2B3139]'
+                  : 'border-[#F0B90B]/50 bg-[#F0B90B]/10 text-[#B45309] dark:text-[#F0B90B]'
+              }`}
+              title="Open Profile & Onboarding Verification Center"
+            >
+              <User className="w-3 h-3" />
+              <span>
+                {kycRecord?.status === 'VERIFIED' && bankAccounts.length > 0 ? 'Profile' : 'Verify Account'}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setView('vault')}
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11] whitespace-nowrap shrink-0 transition-colors"
             >
@@ -778,8 +812,26 @@ export default function App() {
 
         <OfflineIndicator />
 
-        {/* Main Workspace Body */}
+        {/* Main Workspace Body (Focus Mode #0e0e0e Canvas) */}
         <main className="flex-1 p-4 sm:p-6 pb-20 lg:pb-6 max-w-[1600px] w-full mx-auto">
+          <div className="min-h-full bg-slate-50 dark:bg-[#0e0e0e] rounded-lg space-y-4">
+          {!loading && (kycRecord?.status !== 'VERIFIED' || bankAccounts.length === 0) && view !== 'profile' && (
+            <div className="bg-white dark:bg-[#181A20] border border-[#F0B90B]/40 rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-slate-700 dark:text-[#EAECEF]">
+                <ShieldCheck className="w-4 h-4 text-[#F0B90B] shrink-0" />
+                <span>
+                  <strong>Paper Practice ($1M) Open:</strong> Complete Tier 2 KYC Identity ({kycRecord?.status === 'VERIFIED' ? 'Done' : 'Pending'}) &amp; Payment Rail ({bankAccounts.length > 0 ? 'Done' : 'Pending'}) to unlock Real-Money Market Execution.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setView('profile')}
+                className="px-3 py-1 text-xs font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11] whitespace-nowrap shrink-0"
+              >
+                Complete Verification
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -1420,6 +1472,30 @@ export default function App() {
                 />
               )}
 
+              {view === 'profile' && (
+                <UserProfileView
+                  authUser={authUser}
+                  kycRecord={kycRecord}
+                  bankAccounts={bankAccounts}
+                  accountMode={accountMode}
+                  demoCashBalance={demoCashBalance}
+                  realCashBalance={realCashBalance}
+                  vaultBalanceUsd={vaultBalanceUsd}
+                  positions={positions}
+                  orders={orders}
+                  bots={bots}
+                  authSessions={authSessions}
+                  promoProfile={promoProfile}
+                  rewardsState={rewardsState}
+                  socialGraph={socialGraph}
+                  enterpriseSecurity={enterpriseSecurity}
+                  onSubmitKyc={submitKyc}
+                  onSwitchAccountMode={switchAccountMode}
+                  onNavigate={(target) => setView(target)}
+                  onDownloadPolicyBundle={downloadSanitizedPolicyBundle}
+                />
+              )}
+
               {view === 'vault' && (
                 <SecurityVaultView
                   accountMode={accountMode}
@@ -1437,7 +1513,7 @@ export default function App() {
                   promoProfile={promoProfile}
                   bankDirectory={bankDirectory}
                   kycVerified={kycRecord?.status === 'VERIFIED'}
-                  onOpenKyc={() => setView('investors')}
+                  onOpenKyc={() => setView('profile')}
                   guideMode={guideMode}
                   onSwitchAccountMode={switchAccountMode}
                   onTransferVaultShield={transferVaultShield}
@@ -1459,6 +1535,14 @@ export default function App() {
                   networkTelemetry={networkTelemetry}
                   diagnosticsReport={diagnosticsReport}
                   defenseAgents={defenseAgents}
+                  enterpriseSecurity={enterpriseSecurity}
+                  onTrustDevice={trustDevice}
+                  onRevokeDevice={revokeDevice}
+                  onSignHsmAttestation={signHsmAttestation}
+                  onRotateHsmSlot={rotateHsmSlot}
+                  onSubmitBugBounty={submitBugBounty}
+                  onRunAutomatedPentest={runAutomatedPentest}
+                  onDownloadPolicyBundle={downloadSanitizedPolicyBundle}
                   onVerifyNetworkEnvelope={verifyNetworkEnvelope}
                   onRefreshNetwork={fetchNetworkTelemetry}
                   onRefreshDiagnostics={fetchDiagnostics}
@@ -1472,6 +1556,7 @@ export default function App() {
                   countryGuidelines={countryGuidelines}
                   onNavigate={(target) => setView(target)}
                   onOpenSampleTrade={openTerminalForSymbol}
+                  onDownloadPolicyBundle={downloadSanitizedPolicyBundle}
                 />
               )}
 
@@ -1496,6 +1581,7 @@ export default function App() {
               )}
             </>
           )}
+          </div>
         </main>
 
         {/* Clean Footer with Legal Policies */}
@@ -1592,6 +1678,7 @@ export default function App() {
         open={legalTab !== null}
         initialTab={legalTab ?? 'privacy'}
         onClose={() => setLegalTab(null)}
+        onDownloadPolicyBundle={downloadSanitizedPolicyBundle}
       />
 
       {/* Quick Alert Modal */}

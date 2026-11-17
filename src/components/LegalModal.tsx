@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, FileText, Lock, ShieldCheck, X } from 'lucide-react';
+import { Check, Copy, Download, FileText, Lock, ShieldCheck, X } from 'lucide-react';
 
 interface LegalModalProps {
   open: boolean;
   initialTab?: 'privacy' | 'terms' | 'disclosure';
   onClose: () => void;
+  onDownloadPolicyBundle?: () => Promise<boolean>;
 }
 
 const REPORT_FORMAT_TEMPLATE = `Title:
@@ -17,9 +18,10 @@ Proof of Concept:
 Suggested Fix:
 Contact Information:`;
 
-export function LegalModal({ open, initialTab = 'privacy', onClose }: LegalModalProps) {
+export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPolicyBundle }: LegalModalProps) {
   const [tab, setTab] = useState<'privacy' | 'terms' | 'disclosure'>(initialTab);
   const [copiedTemplate, setCopiedTemplate] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -353,11 +355,36 @@ export function LegalModal({ open, initialTab = 'privacy', onClose }: LegalModal
                   Unauthorized probing of private configuration files, path-traversal attempts, API scraping, DDoS floods, or key-extraction attacks are strictly prohibited under computer-fraud statutes and trigger immediate IP/session quarantine. You represent that you are not located in any OFAC, UN, EU, or Indian sanctioned jurisdiction. Aurex shall not be liable for Force Majeure events (war, sovereign capital controls, internet backbone failures, or clearinghouse halts). If any clause is held unenforceable, all remaining clauses remain in full force and constitute the entire binding agreement.
                 </p>
               </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF] mb-1">
+                  9. Sovereign Multi-Region Continuity &amp; Anti-Blocking Jurisdiction Notice
+                </h3>
+                <p>
+                  Aurex Global Exchange operates as non-custodial analytical software and multi-rail settlement infrastructure aligned with SEC/CFTC Rule 4.41 (hypothetical performance disclosures), FinCEN, SEBI/FIU-IND, FCA PS23/6, EU MiCA, MAS, and VARA transparency frameworks. Should regional DNS or ISP restrictions affect any single access point, verified users retain uninterrupted access to their signed HMAC audit logs, self-exportable sanitized policy records, and stateless multi-domain encrypted network mirrors subject to lawful compliance in their local jurisdiction.
+                </p>
+              </div>
             </>
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-[#2B3139] flex justify-end shrink-0">
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-[#2B3139] flex flex-wrap items-center justify-between gap-2 shrink-0">
+          {onDownloadPolicyBundle ? (
+            <button
+              type="button"
+              disabled={exportBusy}
+              onClick={async () => {
+                setExportBusy(true);
+                await onDownloadPolicyBundle();
+                setExportBusy(false);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-[#2B3139] text-slate-700 dark:text-[#EAECEF] hover:bg-slate-100 dark:hover:bg-[#2B3139]"
+            >
+              <Download className="w-3.5 h-3.5 text-[#F0B90B]" />
+              {exportBusy ? 'Exporting…' : 'Download Full Security & Policy File (.md)'}
+            </button>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             onClick={onClose}

@@ -333,34 +333,37 @@ function createInitialWorkspace(userId: string, ownerName: string, priceLookup: 
 
   const startingCash = Number((1_000_000 - (120 * nvdaEntry + 0.45 * btcEntry)).toFixed(2));
 
-  const bankAccounts: BankAccountRecord[] = [
-    storeEncryptedBankAccount(
-      {
-        id: `bnk-${userId}-us`,
-        bankName: 'JPMorgan Private Custody Rail',
-        accountHolder: ownerName,
-        rail: 'ACH',
-        currency: 'USD',
-        verified: true,
-        addedAt: Date.now() - 1000 * 60 * 60 * 24 * 12,
-      },
-      '8839204829',
-      '021000021'
-    ),
-    storeEncryptedBankAccount(
-      {
-        id: `bnk-${userId}-in`,
-        bankName: 'HDFC Institutional Escrowed Rail',
-        accountHolder: ownerName,
-        rail: 'IMPS',
-        currency: 'INR',
-        verified: true,
-        addedAt: Date.now() - 1000 * 60 * 60 * 24 * 5,
-      },
-      '501004927104',
-      'HDFC0000240'
-    ),
-  ];
+  const isSeededDemoAccount = userId === 'usr-principal-1' || userId === 'usr-guided-2';
+  const bankAccounts: BankAccountRecord[] = isSeededDemoAccount
+    ? [
+        storeEncryptedBankAccount(
+          {
+            id: `bnk-${userId}-us`,
+            bankName: 'JPMorgan Private Custody Rail',
+            accountHolder: ownerName,
+            rail: 'ACH',
+            currency: 'USD',
+            verified: true,
+            addedAt: Date.now() - 1000 * 60 * 60 * 24 * 12,
+          },
+          '8839204829',
+          '021000021'
+        ),
+        storeEncryptedBankAccount(
+          {
+            id: `bnk-${userId}-in`,
+            bankName: 'HDFC Institutional Escrowed Rail',
+            accountHolder: ownerName,
+            rail: 'IMPS',
+            currency: 'INR',
+            verified: true,
+            addedAt: Date.now() - 1000 * 60 * 60 * 24 * 5,
+          },
+          '501004927104',
+          'HDFC0000240'
+        ),
+      ]
+    : [];
 
   const seedTs = Date.now() - 1000 * 60 * 60 * 18;
   const seedPrev = 'GENESIS_0000000000000000';
@@ -402,22 +405,24 @@ function createInitialWorkspace(userId: string, ownerName: string, priceLookup: 
       },
     ],
     bankAccounts,
-    vaultTransfers: [
-      {
-        id: seedId,
-        type: 'deposit',
-        amountUsd: 1_000_000,
-        nativeAmount: 1_000_000,
-        currency: 'USD',
-        bankAccountId: `bnk-${userId}-us`,
-        bankLabel: 'JPMorgan Private Custody Rail (•••• 4829)',
-        destination: 'real_trading',
-        status: 'settled',
-        prevHash: seedPrev,
-        entryHash: seedHash,
-        createdAt: seedTs,
-      },
-    ],
+    vaultTransfers: isSeededDemoAccount
+      ? [
+          {
+            id: seedId,
+            type: 'deposit',
+            amountUsd: 1_000_000,
+            nativeAmount: 1_000_000,
+            currency: 'USD',
+            bankAccountId: `bnk-${userId}-us`,
+            bankLabel: 'JPMorgan Private Custody Rail (•••• 4829)',
+            destination: 'real_trading',
+            status: 'settled',
+            prevHash: seedPrev,
+            entryHash: seedHash,
+            createdAt: seedTs,
+          },
+        ]
+      : [],
     lockdownMode: false,
     promo: createDefaultPromoState(userId),
   };

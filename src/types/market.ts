@@ -1334,4 +1334,64 @@ export interface EnterpriseSecuritySnapshot {
   lastPentestReport?: PentestReport;
 }
 
+export interface PortfolioAllocationSlice {
+  id: string;
+  label: string;
+  subLabel: string;
+  category: 'crypto' | 'equities' | 'fx' | 'commodities' | 'cash';
+  valueUsd: number;
+  weightPct: number;
+  riskContributionPct: number;
+  color: string;
+}
 
+export interface AssetRiskAttribution {
+  symbol: string;
+  name: string;
+  venue: string;
+  assetClass: AssetClass;
+  size: number;
+  marketValueUsd: number;
+  weightPct: number;
+  unrealizedPnlUsd: number;
+  realizedPnlUsd: number;
+  annualizedReturnPct: number;
+  annualizedVolatilityPct: number;
+  marginalRiskPct: number;
+  riskContributionPct: number;
+  assetSharpe: number;
+  betaEstimate: number;
+}
+
+export interface PortfolioCorrelationCell {
+  rowSymbol: string;
+  colSymbol: string;
+  correlation: number;
+}
+
+export interface PortfolioAnalyticsReport {
+  accountMode: 'demo' | 'real';
+  totalEquityUsd: number;
+  investedValueUsd: number;
+  cashBalanceUsd: number;
+  vaultBalanceUsd: number;
+  cashWeightPct: number;
+  totalUnrealizedPnlUsd: number;
+  totalRealizedPnlUsd: number;
+  riskFreeRatePct: number;
+  annualizedReturnPct: number;
+  portfolioVolatilityPct: number;
+  dailyVolatilityPct: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  parametricVar95Usd: number;
+  parametricVar95Pct: number;
+  diversificationScorePct: number;
+  concentrationHhi: number;
+  portfolioBeta: number;
+  byHoldingSlices: PortfolioAllocationSlice[];
+  byAssetClassSlices: PortfolioAllocationSlice[];
+  attributions: AssetRiskAttribution[];
+  correlations: PortfolioCorrelationCell[];
+  computedAt: number;
+}

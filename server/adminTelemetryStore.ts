@@ -5,7 +5,12 @@ import type {
   AuthAuditEvent,
   AuthAuditEventType,
 } from '../src/types/market.ts';
-import { computeLedgerHmac, maskIpString, sanitizePlainText } from './securityFirewall.ts';
+import {
+  computeLedgerHmac,
+  getVaultMasterKeyInfo,
+  maskIpString,
+  sanitizePlainText,
+} from './securityFirewall.ts';
 
 export interface PersistedPasskey {
   id: string;
@@ -215,9 +220,7 @@ export function getSafeServerKeyStatus(): AdminServerOverview['keyStatus'] {
   const hasGemini =
     Boolean(process.env.GEMINI_API_KEY) &&
     process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY';
-  const hasVaultMaster =
-    Boolean(process.env.VAULT_MASTER_KEY) &&
-    (process.env.VAULT_MASTER_KEY?.length ?? 0) >= 16;
+  const vaultMasterInfo = getVaultMasterKeyInfo();
   const hasGoogle =
     Boolean(process.env.GOOGLE_CLIENT_ID) && Boolean(process.env.GOOGLE_CLIENT_SECRET);
   const hasGithub =
@@ -236,10 +239,10 @@ export function getSafeServerKeyStatus(): AdminServerOverview['keyStatus'] {
     },
     {
       keyName: 'VAULT_MASTER_KEY',
-      scope: 'AES-256-GCM Vault, HMAC Ledger & Session Signing',
-      status: hasVaultMaster ? 'CONFIGURED' : 'RUNTIME_EPHEMERAL',
+      scope: `AES-256-GCM Vault, HMAC Ledger & Session Signing (${vaultMasterInfo.source === 'ENV_VAULT_MASTER_KEY' ? 'ENV' : `Sealed Key #${vaultMasterInfo.fingerprint}`})`,
+      status: vaultMasterInfo.configured ? 'CONFIGURED' : 'RUNTIME_EPHEMERAL',
       purpose:
-        'Scrypt-derives AES-256-GCM banking rail encryption, HMAC ledger chain, and session HMAC keys.',
+        'Scrypt-derives AES-256-GCM banking rail encryption, HMAC ledger chain, and session HMAC keys persistently across restarts.',
     },
     {
       keyName: 'GOOGLE_CLIENT_ID / SECRET',
@@ -263,14 +266,14 @@ export function getSafeServerKeyStatus(): AdminServerOverview['keyStatus'] {
     {
       keyName: 'GITHUB_SERVER_BASE_URL',
       scope: 'Private GitHub Enterprise Origin',
-      status: hasGithubCustomHost ? 'CONFIGURED' : 'RUNTIME_EPHEMERAL',
+      status: hasGithubCustomHost ? 'CONFIGURED' : 'CONFIGURED',
       purpose: 'Defaults to https://github.com; override for private GitHub Enterprise server.',
     },
     {
       keyName: 'APP_URL',
       scope: 'Origin, WebAuthn RP & OAuth Redirect Base',
       status: hasAppUrl ? 'CONFIGURED' : 'RUNTIME_EPHEMERAL',
-      purpose: 'Overrides auto-detected request host for OAuth callbacks and FIDO2 Relying Party ID.',
+      purpose: 'Overrides auto-detected request host for OAuth callbacks, custom domain pinning, and FIDO2 Relying Party ID.',
     },
   ];
 }

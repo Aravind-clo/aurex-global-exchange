@@ -93,6 +93,7 @@ import {
   startTotpEnrollment,
   updateUserSecurityPrefs,
   verifyMfaLoginCode,
+  verifySessionToken,
   type UserWorkspaceState,
 } from './server/authEngine.ts';
 import {
@@ -121,6 +122,7 @@ import {
   computeLedgerHmac,
   createSecurityFirewallMiddleware,
   extractRawClientIp,
+  getDdosTelemetry,
   issueStepUpChallenge,
   maskClientIp,
   sanitizePlainText,
@@ -128,6 +130,18 @@ import {
   verifyStepUpChallenge,
   verifyTransferChain,
 } from './server/securityFirewall.ts';
+import {
+  buildEnterpriseSecuritySnapshot,
+  buildSanitizedSystemBlueprintMarkdown,
+  ingestAuthEventToSiem,
+  ingestFirewallIncidentToSiem,
+  recordObservedDevice,
+  rotateHsmSlot,
+  runAutomatedPentestSuite,
+  setUserDeviceTrust,
+  signHsmAttestation,
+  submitBountyReport,
+} from './server/enterpriseSecuritySuite.ts';
 import { createOAuthControllerRouter } from './server/oauthController.ts';
 import { createAuthServerRouter } from './server/authServer.ts';
 import { probePrivateGitHubServer } from './server/githubServerAuth.ts';
@@ -539,6 +553,51 @@ function pushFirewallIncident(inc: FirewallIncident) {
   firewallIncidentsList.unshift(inc);
   if (firewallIncidentsList.length > 80) firewallIncidentsList.pop();
   notifyDefenseAgentIncident(inc);
+  ingestFirewallIncidentToSiem(inc);
+}
+
+function recordDeviceFromReq(userId: string, req: express.Request) {
+  const fp = req.header('x-aurex-device-fp');
+  const label = req.header('x-aurex-device-label');
+  if (fp) {
+    recordObservedDevice(userId, fp, label, maskClientIp(req));
+  }
+}
+
+function isUserVerifiedForRealTrading(
+  userId: string,
+  wsState: UserWorkspaceState
+): { ok: boolean; kycVerified: boolean; paymentVerified: boolean; reason?: string } {
+  const kycVerified = getKycVerification(userId).status === 'VERIFIED';
+  const paymentVerified = wsState.bankAccounts.length > 0;
+  if (!kycVerified && !paymentVerified) {
+    return {
+      ok: false,
+      kycVerified,
+      paymentVerified,
+      reason:
+        'Verification Required: Complete Tier 2 KYC Identity & link a verified Payment Rail in Profile / Vault before Live Real-Money Trading. Paper Demo ($1M) remains open.',
+    };
+  }
+  if (!kycVerified) {
+    return {
+      ok: false,
+      kycVerified,
+      paymentVerified,
+      reason:
+        'Identity Verification Pending: Complete Tier 2 KYC in Profile & Verification Center before Live Real-Money Trading.',
+    };
+  }
+  if (!paymentVerified) {
+    return {
+      ok: false,
+      kycVerified,
+      paymentVerified,
+      reason:
+        'Payment Verification Pending: Link a verified UPI / Bank Payment Rail in Wallet & Vault before Live Real-Money Trading.',
+    };
+  }
+  return { ok: true, kycVerified, paymentVerified };
 }
 
 function pushAuditLog(entry: AuditLogEntry) {
@@ -791,6 +850,7 @@ function sendToClient(ws: WebSocket, msg: WsServerMessage) {
 }
 
 setAuthEventListener((ev) => {
+  ingestAuthEventToSiem(ev);
   for (const client of clients.values()) {
     if (client.isAdmin && isFounderEmail(client.email)) {
       sendToClient(client.ws, { type: 'admin:auth_event', payload: ev });
@@ -1275,7 +1335,10 @@ app.use(
     securityStatus,
     firewallIncidents: firewallIncidentsList,
     onSecurityEvent: (inc) => {
-      if (inc) notifyDefenseAgentIncident(inc);
+      if (inc) {
+        notifyDefenseAgentIncident(inc);
+        ingestFirewallIncidentToSiem(inc);
+      }
       broadcast({
         type: 'security:update',
         payload: {
@@ -1754,6 +1817,7 @@ app.get('/api/v1/auth/me', (req, res) => {
     res.status(401).json({ authenticated: false });
     return;
   }
+  recordDeviceFromReq(session.user.id, req);
   const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   res.json({
     authenticated: true,
@@ -1809,6 +1873,7 @@ app.post('/api/v1/auth/login', (req, res) => {
   }
 
   setAuthCookie(req, res, result.token);
+  recordDeviceFromReq(result.user.id, req);
   const wsState = getOrCreateWorkspace(result.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   void getOrCreateUser(result.user.id, result.user.email, {
     displayName: result.user.name,
@@ -1851,6 +1916,7 @@ app.post('/api/v1/auth/mfa/verify', (req, res) => {
     return;
   }
   setAuthCookie(req, res, result.token);
+  recordDeviceFromReq(result.user.id, req);
   const wsState = getOrCreateWorkspace(result.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   res.json({
     user: result.user,
@@ -2124,6 +2190,7 @@ app.post('/api/v1/auth/passkeys/login/verify', (req, res) => {
   }
 
   setAuthCookie(req, res, auth.token);
+  recordDeviceFromReq(auth.user.id, req);
   const wsState = getOrCreateWorkspace(auth.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   res.json({
     user: auth.user,
@@ -2222,6 +2289,7 @@ app.post('/api/v1/auth/register', (req, res) => {
   }
 
   setAuthCookie(req, res, result.token);
+  recordDeviceFromReq(result.user.id, req);
   void getOrCreateUser(result.user.id, result.user.email, {
     displayName: result.user.name,
     role: result.user.role,
@@ -2320,6 +2388,13 @@ app.post('/api/v1/auth/real-money', (req, res) => {
   }
   const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   const enabled = Boolean((req.body as { enabled?: boolean })?.enabled);
+  if (enabled) {
+    const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
+    if (!verif.ok) {
+      res.status(403).json({ error: verif.reason, kycVerified: verif.kycVerified, paymentVerified: verif.paymentVerified });
+      return;
+    }
+  }
   const result = setRealMoneyTradingMode(
     session.user.id,
     enabled,
@@ -2847,6 +2922,13 @@ app.post('/api/v1/nexus/execute', (req, res) => {
     });
     return;
   }
+  if (wsState.accountMode === 'real') {
+    const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
+    if (!verif.ok) {
+      res.status(403).json({ error: verif.reason });
+      return;
+    }
+  }
 
   const body = req.body as { symbol?: string; traderName?: string };
   const sym = (body.symbol ?? 'NVDA').toUpperCase();
@@ -3059,6 +3141,17 @@ app.post('/api/v1/account/mode', (req, res) => {
   }
   const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
   const requested = (req.body as { mode?: 'demo' | 'real' })?.mode === 'real' ? 'real' : 'demo';
+  if (requested === 'real') {
+    const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
+    if (!verif.ok) {
+      res.status(403).json({
+        error: verif.reason,
+        kycVerified: verif.kycVerified,
+        paymentVerified: verif.paymentVerified,
+      });
+      return;
+    }
+  }
   wsState.accountMode = requested;
   wsState.cashBalance = getActiveCashBalance(wsState);
   persistWorkspacesSnapshot();
@@ -3599,6 +3692,150 @@ app.get('/api/v1/security/defense-team', (_req, res) => {
   });
 });
 
+app.get('/api/v1/security/enterprise-suite', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to inspect Enterprise Security Suite.' });
+    return;
+  }
+  recordDeviceFromReq(session.user.id, req);
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const allAuthEvents = listAuthTelemetryEvents(200);
+  const emailLower = session.user.email.toLowerCase();
+  const userAuditLogs = allAuthEvents.filter(
+    (e) => e.userId === session.user.id || e.email.toLowerCase() === emailLower
+  );
+  const snapshot = buildEnterpriseSecuritySnapshot({
+    userId: session.user.id,
+    totpEnabled: Boolean(session.user.totpEnabled),
+    passkeysCount: listPasskeysForUser(session.user.id).length,
+    kycVerified: getKycVerification(session.user.id).status === 'VERIFIED',
+    bankRailsCount: wsState.bankAccounts.length,
+    realCashBalance: wsState.realCashBalance,
+    vaultBalanceUsd: wsState.vaultBalanceUsd,
+    lockdownMode: wsState.lockdownMode,
+    ledgerChainValid: verifyTransferChain(wsState.vaultTransfers),
+    ddos: getDdosTelemetry(),
+    userAuditLogs,
+  });
+  res.json({ snapshot });
+});
+
+app.post('/api/v1/security/devices/:id/trust', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const status = (req.body as { status?: string })?.status === 'REVOKED' ? 'REVOKED' : 'TRUSTED';
+  const device = setUserDeviceTrust(session.user.id, req.params.id, status);
+  if (!device) {
+    res.status(404).json({ error: 'Device fingerprint not found.' });
+    return;
+  }
+  res.json({ ok: true, device });
+});
+
+app.delete('/api/v1/security/devices/:id', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const device = setUserDeviceTrust(session.user.id, req.params.id, 'REVOKED');
+  if (!device) {
+    res.status(404).json({ error: 'Device fingerprint not found.' });
+    return;
+  }
+  res.json({ ok: true, device });
+});
+
+app.post('/api/v1/security/hsm/sign-attestation', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to request HSM attestation.' });
+    return;
+  }
+  const subject = sanitizePlainText(
+    (req.body as { subject?: string })?.subject ?? `${session.user.name} Custody Proof`,
+    64
+  );
+  const attestation = signHsmAttestation(subject);
+  res.json({ ok: true, attestation });
+});
+
+app.post('/api/v1/security/hsm/rotate', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to rotate HSM slot.' });
+    return;
+  }
+  const slotId = sanitizePlainText((req.body as { slotId?: string })?.slotId ?? 'SLOT-01-VAULT-DEK', 40);
+  const slot = rotateHsmSlot(slotId, `${session.user.name} (${maskClientIp(req)})`);
+  if (!slot) {
+    res.status(404).json({ error: `Unknown HSM key slot: ${slotId}` });
+    return;
+  }
+  res.json({ ok: true, slot });
+});
+
+app.post('/api/v1/security/bounty/submit', (req, res) => {
+  const session = extractSessionFromReq(req);
+  const body = req.body as {
+    title?: string;
+    severity?: 'Critical' | 'High' | 'Medium' | 'Low';
+    component?: string;
+    description?: string;
+    reproductionSteps?: string;
+    reporterHandle?: string;
+  };
+  const result = submitBountyReport({
+    title: body.title ?? '',
+    severity: body.severity ?? 'Medium',
+    component: body.component ?? 'Exchange Core / API',
+    description: body.description ?? '',
+    reproductionSteps: body.reproductionSteps ?? '',
+    reporterHandle: session?.user.name ?? body.reporterHandle ?? 'External Security Researcher',
+  });
+  if (!result.ok || !result.submission) {
+    res.status(400).json({ error: result.reason ?? 'Invalid bug bounty submission.' });
+    return;
+  }
+  res.status(201).json({ ok: true, submission: result.submission });
+});
+
+app.post('/api/v1/security/pentest/run', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to execute live penetration test.' });
+    return;
+  }
+  try {
+    const report = await runAutomatedPentestSuite({
+      port: PORT,
+      verifySessionTokenFn: verifySessionToken,
+    });
+    res.json({ ok: true, report });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Automated pentest suite execution failed.',
+    });
+  }
+});
+
+app.get('/api/v1/system/export-policy-bundle', (_req, res) => {
+  const metrics = perfEngine.getMetrics(false);
+  const markdown = buildSanitizedSystemBlueprintMarkdown({
+    instrumentsCount: instrumentsMap.size,
+    activeConnections: metrics.activeConnections,
+    ddos: getDdosTelemetry(),
+    totalBlockedThreats: securityStatus.totalBlocked,
+  });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="SECURITY_AND_SYSTEM_POLICY.md"');
+  res.send(markdown);
+});
+
 // ---------------------------------------------------------------------------
 // Smart Trading Bots (GitHub Quantitative Patterns)
 // ---------------------------------------------------------------------------
@@ -3621,6 +3858,13 @@ app.post('/api/v1/bots', (req, res) => {
   if (wsState.lockdownMode) {
     res.status(423).json({ error: 'Account Lockdown Active: Lift lockdown in Vault before starting bots.' });
     return;
+  }
+  if (wsState.accountMode === 'real') {
+    const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
+    if (!verif.ok) {
+      res.status(403).json({ error: verif.reason });
+      return;
+    }
   }
   const body = req.body as {
     name?: string;
@@ -3976,6 +4220,10 @@ app.post('/api/v1/social/contributors/:id/follow', (req, res) => {
 });
 
 const server = http.createServer(app);
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+server.requestTimeout = 30_000;
+
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: 16 * 1024,
@@ -4195,6 +4443,20 @@ wss.on('connection', (ws, req) => {
             payload: { message: 'Account Lockdown Active: Lift Lockdown in Wallet & Vault before placing orders.' },
           });
           return;
+        }
+        if (activeWorkspace.accountMode === 'real') {
+          const verif = isUserVerifiedForRealTrading(client.userId, activeWorkspace);
+          if (!verif.ok) {
+            sendToClient(ws, {
+              type: 'error',
+              payload: {
+                message:
+                  verif.reason ??
+                  'Complete Tier 2 KYC and Payment Rail verification before placing Real-Money orders.',
+              },
+            });
+            return;
+          }
         }
         const { symbol, side, type, size, price, stopPrice, traderName } = msg.payload;
         const sym = symbol.toUpperCase();
@@ -4423,6 +4685,15 @@ async function bootstrap() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  process.on('uncaughtException', (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    recordRuntimeDiagnosticError('server', 'ERROR', `Fault isolated: ${msg}`, 'Auto-isolated transient server exception without downtime.');
+  });
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    recordRuntimeDiagnosticError('server', 'WARN', `Promise rejection isolated: ${msg}`, 'Async handler failure isolated safely.');
+  });
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Aurex Global Exchange engine listening on http://0.0.0.0:${PORT} (${instrumentsMap.size} global markets)`);

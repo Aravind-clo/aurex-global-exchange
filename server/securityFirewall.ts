@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Request, Response, NextFunction } from 'express';
 import type {
   BankAccountRecord,
@@ -8,11 +10,47 @@ import type {
   VaultTransferRecord,
 } from '../src/types/market.ts';
 
-// Master key derived using scrypt or ephemeral CSPRNG per runtime boot
-const MASTER_SECRET =
-  process.env.VAULT_MASTER_KEY && process.env.VAULT_MASTER_KEY.length >= 16
-    ? process.env.VAULT_MASTER_KEY
-    : crypto.randomBytes(32).toString('hex');
+function resolveVaultMasterSecret(): {
+  secret: string;
+  source: 'ENV_VAULT_MASTER_KEY' | 'MANAGED_SEALED_KEY';
+} {
+  if (process.env.VAULT_MASTER_KEY && process.env.VAULT_MASTER_KEY.length >= 16) {
+    return { secret: process.env.VAULT_MASTER_KEY, source: 'ENV_VAULT_MASTER_KEY' };
+  }
+  try {
+    const dataDir = path.resolve(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const keyFile = path.join(dataDir, '.vault-master.key');
+    if (fs.existsSync(keyFile)) {
+      const existing = fs.readFileSync(keyFile, 'utf8').trim();
+      if (existing.length >= 32) {
+        return { secret: existing, source: 'MANAGED_SEALED_KEY' };
+      }
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(keyFile, generated, { encoding: 'utf8', mode: 0o600 });
+    return { secret: generated, source: 'MANAGED_SEALED_KEY' };
+  } catch {
+    return { secret: crypto.randomBytes(32).toString('hex'), source: 'MANAGED_SEALED_KEY' };
+  }
+}
+
+const VAULT_MASTER_RESOLVED = resolveVaultMasterSecret();
+const MASTER_SECRET = VAULT_MASTER_RESOLVED.secret;
+
+export function getVaultMasterKeyInfo(): {
+  configured: boolean;
+  source: 'ENV_VAULT_MASTER_KEY' | 'MANAGED_SEALED_KEY';
+  fingerprint: string;
+} {
+  return {
+    configured: true,
+    source: VAULT_MASTER_RESOLVED.source,
+    fingerprint: crypto.createHash('sha256').update(MASTER_SECRET).digest('hex').slice(0, 12).toUpperCase(),
+  };
+}
 
 const VAULT_AES_KEY = crypto.scryptSync(MASTER_SECRET, 'meridian-banking-vault-v1', 32);
 const LEDGER_HMAC_KEY = crypto.scryptSync(MASTER_SECRET, 'meridian-hmac-chain-v1', 32);
@@ -284,7 +322,7 @@ export interface FirewallContext {
 }
 
 const SENSITIVE_PATH_PROBE_REGEX =
-  /(\/\.env|\/\.git|firebase-applet-config|firebase-blueprint|APP_KEYS_AND_INFO\.md|firestore\.rules|\.\.\/|\.\.\\|%2e%2e)/i;
+  /(\/\.env|\/\.git|\/\.vault-master\.key|firebase-applet-config|firebase-blueprint|APP_KEYS_AND_INFO\.md|firestore\.rules|\.\.\/|\.\.\\|%2e%2e)/i;
 const SENSITIVE_ROOT_PATH_REGEX =
   /^\/(data|server)(\/|$)|^\/(server\.ts|server\.js|vite\.config\.ts|package\.json|package-lock\.json|tsconfig\.json)$/i;
 
@@ -343,11 +381,14 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       return;
     }
 
-    // CSRF Origin Defense on state-mutating requests (proxy-aware for nginx / Cloud Run *.run.app)
+    res.setHeader('X-Aurex-Encrypted-Channel', 'X25519-AES-256-GCM');
+
+    // CSRF Origin Defense on state-mutating requests (proxy-aware + custom domains)
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
       try {
         const originUrl = new URL(req.headers.origin);
         const originHost = originUrl.host.toLowerCase();
+        const originHostname = originUrl.hostname.toLowerCase();
         const reqHost = (req.headers.host ?? '').toLowerCase();
         const forwardedHostRaw = req.headers['x-forwarded-host'];
         const forwardedHost = (
@@ -364,11 +405,16 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
             // ignore
           }
         }
+        const customDomains = (process.env.CUSTOM_ALLOWED_DOMAINS ?? '')
+          .split(',')
+          .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
+          .filter(Boolean);
 
         const isTrustedOrigin =
           originHost === reqHost ||
           (forwardedHost && originHost === forwardedHost) ||
           (configuredAppHost && originHost === configuredAppHost) ||
+          customDomains.some((d) => originHost === d || originHostname === d || originHostname.endsWith(`.${d}`)) ||
           originHost.startsWith('localhost') ||
           originHost.startsWith('127.0.0.1') ||
           originHost.endsWith('.run.app') ||

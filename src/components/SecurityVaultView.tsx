@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import QRCode from 'qrcode';
 import {
+  Activity,
   AlertCircle,
   ArrowDownLeft,
   ArrowUpRight,
+  Bug,
   Check,
   CheckCircle2,
   Copy,
@@ -14,11 +16,13 @@ import {
   KeyRound,
   Landmark,
   Lock,
+  MonitorSmartphone,
   RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
   Smartphone,
+  Terminal,
   Trash2,
   Unlock,
   UserCheck,
@@ -30,16 +34,22 @@ import type {
   AuthUser,
   BankAccountRecord,
   BankRailType,
+  BugBountySubmission,
   DiagnosticsReport,
   EncryptedNetworkTelemetry,
+  EnterpriseSecuritySnapshot,
   FirewallIncident,
   GlobalBankDirectoryEntry,
   HackDefenseAgent,
+  HsmAttestationResult,
+  HsmKeySlot,
   PasskeyCredentialInfo,
+  PentestReport,
   ReferralPromoProfile,
   SecurityStatus,
   SupportedCurrency,
   TotpEnrollmentSetup,
+  TrustedDeviceRecord,
   VaultTransferRecord,
 } from '../types/market';
 import { downloadCsv, formatCurrency, formatTimeShort } from '../utils/format';
@@ -109,6 +119,20 @@ interface SecurityVaultViewProps {
   networkTelemetry?: EncryptedNetworkTelemetry | null;
   diagnosticsReport?: DiagnosticsReport | null;
   defenseAgents?: HackDefenseAgent[];
+  enterpriseSecurity?: EnterpriseSecuritySnapshot | null;
+  onTrustDevice?: (deviceId: string, status: 'TRUSTED' | 'REVOKED') => Promise<{ ok: boolean; device?: TrustedDeviceRecord }>;
+  onRevokeDevice?: (deviceId: string) => Promise<{ ok: boolean }>;
+  onSignHsmAttestation?: (subject?: string) => Promise<{ ok: boolean; attestation?: HsmAttestationResult }>;
+  onRotateHsmSlot?: (slotId: string) => Promise<{ ok: boolean; slot?: HsmKeySlot }>;
+  onSubmitBugBounty?: (payload: {
+    title: string;
+    severity: BugBountySubmission['severity'];
+    component: string;
+    description: string;
+    reproductionSteps: string;
+  }) => Promise<{ ok: boolean; error?: string; submission?: BugBountySubmission }>;
+  onRunAutomatedPentest?: () => Promise<{ ok: boolean; report?: PentestReport }>;
+  onDownloadPolicyBundle?: () => Promise<boolean>;
   onVerifyNetworkEnvelope?: (channel?: string) => Promise<{ ok: boolean; error?: string }>;
   onRefreshNetwork?: () => Promise<void>;
   onRefreshDiagnostics?: () => Promise<void>;
@@ -214,6 +238,14 @@ export function SecurityVaultView({
   networkTelemetry = null,
   diagnosticsReport = null,
   defenseAgents = [],
+  enterpriseSecurity = null,
+  onTrustDevice,
+  onRevokeDevice,
+  onSignHsmAttestation,
+  onRotateHsmSlot,
+  onSubmitBugBounty,
+  onRunAutomatedPentest,
+  onDownloadPolicyBundle,
   onVerifyNetworkEnvelope,
   onRefreshNetwork,
   onRefreshDiagnostics,
@@ -277,6 +309,17 @@ export function SecurityVaultView({
   const [realMoneyBusy, setRealMoneyBusy] = useState(false);
   const [realMoneyError, setRealMoneyError] = useState<string | null>(null);
   const [reportTemplateCopied, setReportTemplateCopied] = useState(false);
+
+  // Enterprise Security Controls State
+  const [hsmBusy, setHsmBusy] = useState(false);
+  const [pentestBusy, setPentestBusy] = useState(false);
+  const [bountyTitle, setBountyTitle] = useState('');
+  const [bountySeverity, setBountySeverity] = useState<BugBountySubmission['severity']>('Medium');
+  const [bountyComponent, setBountyComponent] = useState('Aegis-WAF / Payment Rail');
+  const [bountyDesc, setBountyDesc] = useState('');
+  const [bountySteps, setBountySteps] = useState('');
+  const [bountyError, setBountyError] = useState<string | null>(null);
+  const [bountyBusy, setBountyBusy] = useState(false);
 
   const activeBankId = bankAccounts.some((b) => b.id === selectedBankId)
     ? selectedBankId
@@ -1941,6 +1984,537 @@ export function SecurityVaultView({
           </div>
         </div>
       </div>
+
+      {/* ENTERPRISE SECURITY OPERATIONS: WALLET RISK, DDoS, DEVICE FINGERPRINTING, HSM, SIEM, PENTEST & BUG BOUNTY */}
+      {enterpriseSecurity && (
+        <div className="space-y-6">
+          {/* Row 1: Wallet Risk Scoring + L7 DDoS Protection Telemetry */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            <div className="xl:col-span-6 bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-[#2B3139]">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-[#F0B90B]" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      Live Wallet Risk Scoring Engine (0–100)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                      Real-time custody risk telemetry across MFA coverage, KYC status, devices, and hot-desk exposure.
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right font-mono tabular-nums">
+                  <div
+                    className={`text-lg font-bold ${
+                      enterpriseSecurity.walletRisk.tier === 'LOW'
+                        ? 'text-[#0ECB81]'
+                        : enterpriseSecurity.walletRisk.tier === 'MODERATE'
+                        ? 'text-[#F0B90B]'
+                        : 'text-[#F6465D]'
+                    }`}
+                  >
+                    {enterpriseSecurity.walletRisk.score}/100 ({enterpriseSecurity.walletRisk.tier})
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full h-2 rounded bg-slate-100 dark:bg-[#0B0E11] overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    enterpriseSecurity.walletRisk.tier === 'LOW'
+                      ? 'bg-[#0ECB81]'
+                      : enterpriseSecurity.walletRisk.tier === 'MODERATE'
+                      ? 'bg-[#F0B90B]'
+                      : 'bg-[#F6465D]'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(4, enterpriseSecurity.walletRisk.score))}%` }}
+                />
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-[#B7BDC6]">
+                {enterpriseSecurity.walletRisk.summary}
+              </p>
+
+              <div className="space-y-2 text-xs">
+                {enterpriseSecurity.walletRisk.factors.map((f) => (
+                  <div
+                    key={f.id}
+                    className="p-2.5 rounded border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex items-start justify-between gap-2"
+                  >
+                    <div>
+                      <div className="font-semibold text-slate-900 dark:text-[#EAECEF]">{f.label}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-[#848E9C]">{f.mitigation}</div>
+                    </div>
+                    <span
+                      className={`font-mono text-[11px] font-semibold shrink-0 ${
+                        f.status === 'PASS'
+                          ? 'text-[#0ECB81]'
+                          : f.status === 'WARN'
+                          ? 'text-[#F0B90B]'
+                          : 'text-[#F6465D]'
+                      }`}
+                    >
+                      {f.status} {f.impact > 0 ? `(+${f.impact})` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* L7 DDoS Scrubber + Device Fingerprinting */}
+            <div className="xl:col-span-6 space-y-6">
+              <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-3">
+                <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#2B3139]">
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[#0ECB81]" />
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      L7 DDoS Scrubber &amp; Rate Shield
+                    </h3>
+                  </div>
+                  <span className="font-mono text-[11px] font-semibold text-[#0ECB81]">
+                    {enterpriseSecurity.ddos.edgeScrubberMode}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono tabular-nums">
+                  <div>
+                    <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">RPM (60s)</div>
+                    <div className="font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      {enterpriseSecurity.ddos.requestsLast60s}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Tracked Buckets</div>
+                    <div className="font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      {enterpriseSecurity.ddos.activeIpBuckets}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Floods Dropped</div>
+                    <div className="font-semibold text-[#F6465D]">
+                      {enterpriseSecurity.ddos.blockedFloodRequests}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Cooldown IPs</div>
+                    <div className="font-semibold text-[#F0B90B]">
+                      {enterpriseSecurity.ddos.activeCooldownIps}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Device Fingerprinting Registry */}
+              <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-3">
+                <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#2B3139]">
+                  <div className="flex items-center gap-2">
+                    <MonitorSmartphone className="w-4 h-4 text-[#F0B90B]" />
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      Cryptographic Device Fingerprints ({enterpriseSecurity.trustedDevices.length})
+                    </h3>
+                  </div>
+                </div>
+                <div className="space-y-2 max-h-48 overflow-y-auto text-xs">
+                  {enterpriseSecurity.trustedDevices.length === 0 ? (
+                    <div className="text-slate-500 dark:text-[#848E9C] py-3">
+                      Registering current SHA-256 browser fingerprint…
+                    </div>
+                  ) : (
+                    enterpriseSecurity.trustedDevices.map((dev) => (
+                      <div
+                        key={dev.id}
+                        className="p-2.5 rounded border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 dark:text-[#EAECEF] truncate">
+                            {dev.label} ·{' '}
+                            <span
+                              className={
+                                dev.trustStatus === 'TRUSTED'
+                                  ? 'text-[#0ECB81]'
+                                  : dev.trustStatus === 'NEW_OBSERVED'
+                                  ? 'text-[#F0B90B]'
+                                  : 'text-[#F6465D]'
+                              }
+                            >
+                              {dev.trustStatus}
+                            </span>
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-500 dark:text-[#848E9C] truncate">
+                            {dev.fingerprintHash} · {dev.maskedIp} · {dev.sightings} sightings
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {dev.trustStatus !== 'TRUSTED' && onTrustDevice && (
+                            <button
+                              type="button"
+                              onClick={() => void onTrustDevice(dev.id, 'TRUSTED')}
+                              className="px-2 py-1 text-[10px] font-semibold rounded bg-[#0ECB81] text-[#0B0E11]"
+                            >
+                              Trust
+                            </button>
+                          )}
+                          {dev.trustStatus !== 'REVOKED' && onRevokeDevice && (
+                            <button
+                              type="button"
+                              onClick={() => void onRevokeDevice(dev.id)}
+                              className="px-2 py-1 text-[10px] font-semibold rounded border border-[#F6465D]/40 text-[#F6465D] hover:bg-[#F6465D]/10"
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Hardware Security Module (FIPS 140-3 HSM) + Live Automated Penetration Testing */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            <div className="xl:col-span-6 bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-[#2B3139]">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-[#0ECB81]" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      Hardware Security Module (FIPS 140-3 Level 3 Enclave)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                      Key wrapping, ECDSA-P384 root attestation signing, &amp; zero-downtime key rotation.
+                    </p>
+                  </div>
+                </div>
+                {onSignHsmAttestation && (
+                  <button
+                    type="button"
+                    disabled={hsmBusy}
+                    onClick={async () => {
+                      setHsmBusy(true);
+                      await onSignHsmAttestation('Cold Vault Custody Proof');
+                      setHsmBusy(false);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11]"
+                  >
+                    {hsmBusy ? 'Signing…' : 'Sign ECDSA Attestation'}
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2 text-xs">
+                {enterpriseSecurity.hsmSlots.map((slot) => (
+                  <div
+                    key={slot.slotId}
+                    className="p-3 rounded border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono font-semibold text-slate-900 dark:text-[#EAECEF]">
+                        {slot.slotId} · Epoch #{slot.epoch}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                        {slot.alias} ({slot.algorithm}) · FP: <span className="font-mono">{slot.publicKeyFingerprint}</span>
+                      </div>
+                    </div>
+                    {onRotateHsmSlot && (
+                      <button
+                        type="button"
+                        onClick={() => void onRotateHsmSlot(slot.slotId)}
+                        className="px-2.5 py-1 text-[11px] font-medium rounded border border-slate-200 dark:border-[#2B3139] hover:bg-slate-100 dark:hover:bg-[#2B3139]"
+                      >
+                        Rotate Key
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {enterpriseSecurity.hsmLastAttestation && (
+                <div className="p-2.5 rounded bg-[#0ECB81]/10 border border-[#0ECB81]/30 font-mono text-[10px] text-[#0ECB81] break-all">
+                  VERIFIED {enterpriseSecurity.hsmLastAttestation.attestationId} · {enterpriseSecurity.hsmLastAttestation.algorithm} · SIG: {enterpriseSecurity.hsmLastAttestation.signatureHex}…
+                </div>
+              )}
+            </div>
+
+            {/* Automated Live Penetration Testing Suite */}
+            <div className="xl:col-span-6 bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-[#2B3139]">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-[#F0B90B]" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      Automated Live Penetration Testing Suite (8 Attack Probes)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                      Executes real HTTP/cryptographic probes against KeySentinel, Aegis-WAF, ZeroDay-Sanitizer &amp; Replay shields.
+                    </p>
+                  </div>
+                </div>
+                {onRunAutomatedPentest && (
+                  <button
+                    type="button"
+                    disabled={pentestBusy}
+                    onClick={async () => {
+                      setPentestBusy(true);
+                      await onRunAutomatedPentest();
+                      setPentestBusy(false);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded bg-[#0ECB81] hover:bg-[#0bb572] text-[#0B0E11]"
+                  >
+                    {pentestBusy ? 'Probing…' : 'Run Live Pentest'}
+                  </button>
+                )}
+              </div>
+
+              {enterpriseSecurity.lastPentestReport ? (
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between font-mono text-[11px]">
+                    <span className="text-slate-500 dark:text-[#848E9C]">
+                      Run: {enterpriseSecurity.lastPentestReport.runId}
+                    </span>
+                    <span className="font-bold text-[#0ECB81]">
+                      {enterpriseSecurity.lastPentestReport.passedVectors}/{enterpriseSecurity.lastPentestReport.totalVectors} PASS ({enterpriseSecurity.lastPentestReport.scorePct}%)
+                    </span>
+                  </div>
+                  <div className="max-h-52 overflow-y-auto space-y-1.5">
+                    {enterpriseSecurity.lastPentestReport.probes.map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-2 rounded border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 dark:text-[#EAECEF] truncate">
+                            {p.vectorName}
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-500 dark:text-[#848E9C]">
+                            {p.targetLayer} · {p.actualResult} ({p.latencyMs}ms)
+                          </div>
+                        </div>
+                        <span className={`font-mono text-[10px] font-bold ${p.passed ? 'text-[#0ECB81]' : 'text-[#F6465D]'}`}>
+                          {p.passed ? 'PASS' : 'FAIL'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-500 dark:text-[#848E9C]">
+                  Click &ldquo;Run Live Pentest&rdquo; to execute 8 real-time exploit probes across WAF, key isolation, replay, &amp; RBAC.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Row 3: SIEM Correlation Stream + Security Audit Log + Bug Bounty Portal */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            <div className="xl:col-span-7 bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-[#2B3139]">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-[#F0B90B]" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      SIEM Correlation Stream &amp; User Security Audit Log
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                      MITRE ATT&amp;CK tagged security correlation combined with per-user auth &amp; vault custody trail.
+                    </p>
+                  </div>
+                </div>
+                {onDownloadPolicyBundle && (
+                  <button
+                    type="button"
+                    onClick={() => void onDownloadPolicyBundle()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded border border-slate-200 dark:border-[#2B3139] hover:bg-slate-100 dark:hover:bg-[#2B3139]"
+                  >
+                    <Download className="w-3 h-3 text-[#F0B90B]" />
+                    Export Policy Bundle (.md)
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto max-h-56 overflow-y-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-[#2B3139] text-slate-500 dark:text-[#848E9C]">
+                      <th className="py-1.5 pr-2">Time</th>
+                      <th className="py-1.5 pr-2">Layer / Tactic</th>
+                      <th className="py-1.5 pr-2">Event Summary</th>
+                      <th className="py-1.5 text-right">Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-[#2B3139]">
+                    {enterpriseSecurity.siemEvents.slice(0, 12).map((ev) => (
+                      <tr key={ev.id}>
+                        <td className="py-1.5 pr-2 font-mono text-slate-500 whitespace-nowrap">
+                          {formatTimeShort(ev.createdAt)}
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <div className="font-mono font-semibold text-slate-900 dark:text-[#EAECEF]">
+                            {ev.sourceLayer}
+                          </div>
+                          <div className="text-[10px] text-slate-500">{ev.mitreTactic}</div>
+                        </td>
+                        <td className="py-1.5 pr-2 text-slate-700 dark:text-[#B7BDC6]">{ev.summary}</td>
+                        <td
+                          className={`py-1.5 text-right font-mono font-semibold ${
+                            ev.severity === 'CRITICAL'
+                              ? 'text-[#F6465D]'
+                              : ev.severity === 'HIGH' || ev.severity === 'MEDIUM'
+                              ? 'text-[#F0B90B]'
+                              : 'text-[#0ECB81]'
+                          }`}
+                        >
+                          {ev.severity}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 dark:border-[#2B3139]">
+                <div className="text-[11px] font-semibold text-slate-700 dark:text-[#EAECEF] mb-1.5">
+                  Recent User Auth &amp; Security Audit Events ({enterpriseSecurity.userAuditLogs.length})
+                </div>
+                <div className="max-h-28 overflow-y-auto space-y-1 text-[11px] font-mono">
+                  {enterpriseSecurity.userAuditLogs.slice(0, 8).map((a) => (
+                    <div key={a.id} className="flex items-center justify-between gap-2 text-slate-500 dark:text-[#848E9C]">
+                      <span className="truncate">
+                        {formatTimeShort(a.createdAt)} · {a.eventType} · {a.detail}
+                      </span>
+                      <span className={a.outcome === 'SUCCESS' ? 'text-[#0ECB81]' : 'text-[#F6465D]'}>
+                        {a.outcome}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Bug Bounty Program Submission Desk */}
+            <div className="xl:col-span-5 bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-3 text-xs">
+              <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#2B3139]">
+                <div className="flex items-center gap-2">
+                  <Bug className="w-4 h-4 text-[#0ECB81]" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
+                      Bug Bounty Program &amp; Triage Desk
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                      Up to $25,000 rewards · Safe Harbor active
+                    </p>
+                  </div>
+                </div>
+                <span className="font-mono text-[11px] text-[#0ECB81]">
+                  {enterpriseSecurity.bountySubmissions.length} Triaged
+                </span>
+              </div>
+
+              {onSubmitBugBounty && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setBountyError(null);
+                    setBountyBusy(true);
+                    const res = await onSubmitBugBounty({
+                      title: bountyTitle,
+                      severity: bountySeverity,
+                      component: bountyComponent,
+                      description: bountyDesc,
+                      reproductionSteps: bountySteps,
+                    });
+                    setBountyBusy(false);
+                    if (!res.ok) {
+                      setBountyError(res.error ?? 'Failed to submit report.');
+                    } else {
+                      setBountyTitle('');
+                      setBountyDesc('');
+                      setBountySteps('');
+                    }
+                  }}
+                  className="space-y-2"
+                >
+                  {bountyError && (
+                    <div className="p-2 rounded border border-[#F6465D]/40 bg-[#F6465D]/10 text-[#F6465D]">
+                      {bountyError}
+                    </div>
+                  )}
+                  <input
+                    type="text"
+                    value={bountyTitle}
+                    onChange={(e) => setBountyTitle(e.target.value)}
+                    placeholder="Vulnerability title (min 6 chars)..."
+                    required
+                    className="w-full px-2.5 py-1.5 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={bountySeverity}
+                      onChange={(e) => setBountySeverity(e.target.value as BugBountySubmission['severity'])}
+                      className="px-2.5 py-1.5 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]"
+                    >
+                      <option value="Critical">Critical ($5k–$25k)</option>
+                      <option value="High">High ($1.5k–$5k)</option>
+                      <option value="Medium">Medium ($350–$1.5k)</option>
+                      <option value="Low">Low ($100–$350)</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={bountyComponent}
+                      onChange={(e) => setBountyComponent(e.target.value)}
+                      placeholder="Affected component"
+                      className="px-2.5 py-1.5 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]"
+                    />
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={bountyDesc}
+                    onChange={(e) => setBountyDesc(e.target.value)}
+                    placeholder="Detailed impact & technical description (min 12 chars)..."
+                    required
+                    className="w-full px-2.5 py-1.5 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]"
+                  />
+                  <input
+                    type="text"
+                    value={bountySteps}
+                    onChange={(e) => setBountySteps(e.target.value)}
+                    placeholder="Reproduction steps / PoC route (optional)"
+                    className="w-full px-2.5 py-1.5 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={bountyBusy}
+                    className="w-full py-2 font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11]"
+                  >
+                    {bountyBusy ? 'Submitting to Triage Desk…' : 'Submit Private Bug Bounty Report'}
+                  </button>
+                </form>
+              )}
+
+              <div className="pt-2 space-y-1.5 max-h-28 overflow-y-auto">
+                {enterpriseSecurity.bountySubmissions.slice(0, 5).map((b) => (
+                  <div
+                    key={b.id}
+                    className="p-2 rounded border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-900 dark:text-[#EAECEF] truncate">
+                        {b.ticketCode} · {b.title}
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-500">
+                        {b.severity} · {b.rewardBandUsd}
+                      </div>
+                    </div>
+                    <span className="font-mono text-[10px] font-semibold text-[#0ECB81] shrink-0">
+                      {b.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
