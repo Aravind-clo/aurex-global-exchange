@@ -1,5 +1,5 @@
 /**
- * Security rules verification harness covering the 12 adversarial payloads
+ * Security rules verification harness covering the adversarial payloads
  * documented in security_spec.md against firestore.rules.
  */
 export const DIRTY_DOZEN_CASES = [
@@ -15,4 +15,8 @@ export const DIRTY_DOZEN_CASES = [
   { id: 10, name: 'Cross-Owner Spoof in Watchlist', path: '/users/uid_attacker/watchlists/NVDA', expected: 'PERMISSION_DENIED' },
   { id: 11, name: 'Terminal Triggered Alert Mutation', path: '/users/uid_123/alerts/a1', expected: 'PERMISSION_DENIED' },
   { id: 12, name: 'Unscoped Cross-Tenant List Query', path: '/users/uid_victim/watchlists', expected: 'PERMISSION_DENIED' },
+  { id: 13, name: 'Cross-Tenant Allowlist Tampering', path: '/users/uid_victim/allowlists/al_1', expected: 'PERMISSION_DENIED' },
+  { id: 14, name: 'Allowlist Threat Status Spoofing on Update', path: '/users/uid_123/allowlists/al_1', expected: 'PERMISSION_DENIED' },
+  { id: 15, name: 'Security Audit Score Tampering (>100 or Update)', path: '/users/uid_123/securityAudits/au_1', expected: 'PERMISSION_DENIED' },
+  { id: 16, name: 'Unsupported Chain or Injection Wallet Deposit Address', path: '/users/uid_123/wallets/DOGE', expected: 'PERMISSION_DENIED' },
 ] as const;

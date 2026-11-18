@@ -1,10 +1,15 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, isCloudSqlConfigured } from './index.ts';
 import {
   authAuditLogs,
+  fxSwaps,
+  intelligenceLogs,
   priceAlerts,
+  securityAudits,
   tradeOrders,
   users,
+  walletAccounts,
+  withdrawalAllowlist,
   workspaces,
 } from './schema.ts';
 
@@ -205,3 +210,211 @@ export async function recordAuthAuditInCloudSql(params: {
     console.error('Cloud SQL auth audit sync skipped:', error);
   }
 }
+
+export async function syncWalletAccountInCloudSql(params: {
+  uid: string;
+  email: string;
+  chain: string;
+  assetSymbol: string;
+  depositAddress: string;
+  balanceNative: number;
+  balanceUsd: number;
+  dailyLimitUsd: number;
+  singleTxLimitUsd: number;
+  spent24hUsd: number;
+  strictAllowlist: boolean;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    const existing = await db
+      .select({ id: walletAccounts.id })
+      .from(walletAccounts)
+      .where(and(eq(walletAccounts.userId, userRow.id), eq(walletAccounts.chain, params.chain)))
+      .limit(1);
+
+    if (existing[0]) {
+      await db
+        .update(walletAccounts)
+        .set({
+          assetSymbol: params.assetSymbol,
+          depositAddress: params.depositAddress,
+          balanceNative: params.balanceNative,
+          balanceUsd: params.balanceUsd,
+          dailyLimitUsd: params.dailyLimitUsd,
+          singleTxLimitUsd: params.singleTxLimitUsd,
+          spent24hUsd: params.spent24hUsd,
+          strictAllowlist: params.strictAllowlist,
+          updatedAt: new Date(),
+        })
+        .where(eq(walletAccounts.id, existing[0].id));
+    } else {
+      await db.insert(walletAccounts).values({
+        userId: userRow.id,
+        chain: params.chain,
+        assetSymbol: params.assetSymbol,
+        depositAddress: params.depositAddress,
+        balanceNative: params.balanceNative,
+        balanceUsd: params.balanceUsd,
+        dailyLimitUsd: params.dailyLimitUsd,
+        singleTxLimitUsd: params.singleTxLimitUsd,
+        spent24hUsd: params.spent24hUsd,
+        strictAllowlist: params.strictAllowlist,
+      });
+    }
+  } catch (error) {
+    console.error('Cloud SQL wallet account sync skipped:', error);
+  }
+}
+
+export async function recordAllowlistInCloudSql(params: {
+  uid: string;
+  email: string;
+  externalId: string;
+  label: string;
+  chain: string;
+  address: string;
+  enabled: boolean;
+  threatStatus: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(withdrawalAllowlist)
+      .values({
+        userId: userRow.id,
+        externalId: params.externalId,
+        label: params.label,
+        chain: params.chain,
+        address: params.address,
+        enabled: params.enabled,
+        threatStatus: params.threatStatus,
+      })
+      .onConflictDoUpdate({
+        target: withdrawalAllowlist.externalId,
+        set: {
+          label: params.label,
+          enabled: params.enabled,
+          threatStatus: params.threatStatus,
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL allowlist sync skipped:', error);
+  }
+}
+
+export async function deleteAllowlistInCloudSql(params: {
+  uid: string;
+  externalId: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const existingUser = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.uid, params.uid))
+      .limit(1);
+    if (!existingUser[0]) return;
+    await db
+      .delete(withdrawalAllowlist)
+      .where(
+        and(
+          eq(withdrawalAllowlist.userId, existingUser[0].id),
+          eq(withdrawalAllowlist.externalId, params.externalId)
+        )
+      );
+  } catch (error) {
+    console.error('Cloud SQL allowlist delete skipped:', error);
+  }
+}
+
+export async function recordFxSwapInCloudSql(params: {
+  uid: string;
+  email: string;
+  externalSwapId: string;
+  fromCurrency: string;
+  toCurrency: string;
+  fromAmount: number;
+  toAmount: number;
+  rate: number;
+  feeUsd: number;
+  rateSource: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(fxSwaps)
+      .values({
+        userId: userRow.id,
+        externalSwapId: params.externalSwapId,
+        fromCurrency: params.fromCurrency,
+        toCurrency: params.toCurrency,
+        fromAmount: params.fromAmount,
+        toAmount: params.toAmount,
+        rate: params.rate,
+        feeUsd: params.feeUsd,
+        rateSource: params.rateSource,
+      })
+      .onConflictDoNothing({ target: fxSwaps.externalSwapId });
+  } catch (error) {
+    console.error('Cloud SQL FX swap sync skipped:', error);
+  }
+}
+
+export async function recordSecurityAuditInCloudSql(params: {
+  uid: string;
+  email: string;
+  externalAuditId: string;
+  overallScorePct: number;
+  passedCount: number;
+  warnCount: number;
+  failCount: number;
+  summary: string;
+  findingsJson: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(securityAudits)
+      .values({
+        userId: userRow.id,
+        externalAuditId: params.externalAuditId,
+        overallScorePct: Math.round(params.overallScorePct),
+        passedCount: params.passedCount,
+        warnCount: params.warnCount,
+        failCount: params.failCount,
+        summary: params.summary,
+        findingsJson: params.findingsJson,
+      })
+      .onConflictDoNothing({ target: securityAudits.externalAuditId });
+  } catch (error) {
+    console.error('Cloud SQL security audit sync skipped:', error);
+  }
+}
+
+export async function recordIntelligenceLogInCloudSql(params: {
+  uid: string;
+  email: string;
+  logType: string;
+  queryTarget: string;
+  riskLevel: string;
+  summary: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db.insert(intelligenceLogs).values({
+      userId: userRow.id,
+      logType: params.logType,
+      queryTarget: params.queryTarget,
+      riskLevel: params.riskLevel,
+      summary: params.summary,
+    });
+  } catch (error) {
+    console.error('Cloud SQL intelligence log skipped:', error);
+  }
+}
+

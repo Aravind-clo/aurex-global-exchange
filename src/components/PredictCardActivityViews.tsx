@@ -12,6 +12,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import type {
+  BinLookupResult,
   ExchangeFeaturesState,
   Instrument,
   MlPrediction,
@@ -374,6 +375,7 @@ interface AurexCardViewProps {
     dailyLimitUsd?: number;
   }) => Promise<boolean>;
   onSpend: (merchant: string, category: string, amountUsd: number) => Promise<boolean>;
+  onLookupBin?: (bin: string) => Promise<BinLookupResult | null>;
 }
 
 export function AurexCardView({
@@ -382,12 +384,16 @@ export function AurexCardView({
   onToggleFreeze,
   onUpdateConfig,
   onSpend,
+  onLookupBin,
 }: AurexCardViewProps) {
   const card = exchangeFeatures?.cardProfile;
   const [merchant, setMerchant] = useState('Cloud Compute Terminal');
   const [category, setCategory] = useState('Infrastructure');
   const [amount, setAmount] = useState('125');
   const [busy, setBusy] = useState(false);
+  const [binPrefix, setBinPrefix] = useState('510510');
+  const [binResult, setBinResult] = useState<BinLookupResult | null>(null);
+  const [binBusy, setBinBusy] = useState(false);
 
   const handleCharge = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -592,6 +598,54 @@ export function AurexCardView({
               ))}
             </div>
           </div>
+
+          {onLookupBin && (
+            <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Funding Card BIN / IIN Check</h3>
+                <span className="text-[11px] font-mono text-[#8B919E]">First 6-8 digits only</span>
+              </div>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBinBusy(true);
+                  const res = await onLookupBin(binPrefix);
+                  setBinBusy(false);
+                  if (res) setBinResult(res);
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  maxLength={8}
+                  value={binPrefix}
+                  onChange={(e) => setBinPrefix(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="Enter 6-8 BIN digits"
+                  className="flex-1 px-3 py-2 rounded-xl bg-[#121419] border border-[#24262C] text-xs font-mono text-white tabular-nums"
+                />
+                <button
+                  type="submit"
+                  disabled={binBusy}
+                  className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] text-xs font-semibold"
+                >
+                  {binBusy ? 'Checking…' : 'Check BIN'}
+                </button>
+              </form>
+              {binResult && (
+                <div className="p-3 rounded-xl bg-[#121419] border border-[#24262C] text-xs space-y-1">
+                  <div className="flex items-center justify-between font-mono">
+                    <span className="font-semibold text-white">
+                      {binResult.scheme} · {binResult.bankName}
+                    </span>
+                    <span className={binResult.valid ? 'text-[#0ECB81]' : 'text-[#F6465D]'}>
+                      {binResult.valid ? 'VERIFIED' : 'INVALID'} ({binResult.countryCode})
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#8B919E]">{binResult.notes}</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

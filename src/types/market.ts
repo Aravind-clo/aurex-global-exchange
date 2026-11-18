@@ -1478,3 +1478,211 @@ export interface ExchangeFeaturesState {
   cardProfile: CardProfile;
 }
 
+export interface CoinGeckoCoinTelemetry {
+  id: string;
+  symbol: string;
+  name: string;
+  priceUsd: number;
+  marketCapUsd: number;
+  volume24hUsd: number;
+  change24hPct: number;
+  rank: number;
+  source: 'CoinGecko API v3' | 'Exchange Live Cache';
+  updatedAt: number;
+}
+
+export interface FrankfurterFxBundle {
+  base: string;
+  date: string;
+  rates: Record<string, number>;
+  source: 'Frankfurter ECB API' | 'Exchange FX Reference';
+  updatedAt: number;
+}
+
+export interface BinLookupResult {
+  bin: string;
+  valid: boolean;
+  scheme: string;
+  type: 'debit' | 'credit' | 'prepaid' | 'unknown';
+  brand: string;
+  bankName: string;
+  bankCountry: string;
+  countryCode: string;
+  currency: string;
+  prepaid: boolean;
+  riskTier: 'LOW' | 'MODERATE' | 'ELEVATED';
+  notes: string;
+  source: 'Binlist Public API' | 'Issuer IIN Registry';
+  checkedAt: number;
+}
+
+export interface ThreatCheckResult {
+  id: string;
+  target: string;
+  targetType: 'ip' | 'domain' | 'wallet_address' | 'url';
+  verdict: 'CLEAN' | 'SUSPICIOUS' | 'BLOCKED';
+  riskScore: number;
+  asnOrRegistrar: string;
+  country: string;
+  indicators: string[];
+  recommendation: string;
+  source: 'Public Threat Feeds + Anti-Phishing Engine';
+  checkedAt: number;
+}
+
+export interface ChainGasEstimate {
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  chainName: string;
+  nativeSymbol: string;
+  unitLabel: string;
+  slowFeeNative: string;
+  slowFeeUsd: number;
+  slowEta: string;
+  standardFeeNative: string;
+  standardFeeUsd: number;
+  standardEta: string;
+  fastFeeNative: string;
+  fastFeeUsd: number;
+  fastEta: string;
+  mempoolPendingTx: number;
+  congestion: 'LOW' | 'MODERATE' | 'CONGESTED';
+  source: 'Mempool / RPC Live' | 'Calibrated Chain Telemetry';
+  updatedAt: number;
+}
+
+export interface MultiChainWalletAddress {
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  chainName: string;
+  assetSymbol: string;
+  address: string;
+  memoTag?: string;
+  minDepositNative: string;
+  confirmationsRequired: number;
+  balanceNative: number;
+  balanceUsd: number;
+}
+
+export interface WalletCurrencyBalance {
+  currency: string;
+  label: string;
+  kind: 'fiat' | 'crypto';
+  balance: number;
+  usdValue: number;
+}
+
+export interface WithdrawalAllowlistEntry {
+  id: string;
+  ownerId: string;
+  label: string;
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  address: string;
+  enabled: boolean;
+  threatStatus: 'CLEAN' | 'SUSPICIOUS' | 'BLOCKED';
+  createdAt: number;
+}
+
+export interface WalletVelocityPolicy {
+  dailyLimitUsd: number;
+  singleTxLimitUsd: number;
+  spentLast24hUsd: number;
+  remaining24hUsd: number;
+  strictAllowlistOnly: boolean;
+  updatedAt: number;
+}
+
+export interface FxSwapQuote {
+  fromCurrency: string;
+  toCurrency: string;
+  fromAmount: number;
+  rate: number;
+  inverseRate: number;
+  spreadBps: number;
+  feeUsd: number;
+  toAmount: number;
+  rateSource: string;
+  expiresAt: number;
+}
+
+export interface FxSwapRecord {
+  id: string;
+  ownerId: string;
+  fromCurrency: string;
+  toCurrency: string;
+  fromAmount: number;
+  toAmount: number;
+  rate: number;
+  feeUsd: number;
+  rateSource: string;
+  status: 'SETTLED';
+  createdAt: number;
+}
+
+export interface CustodyWithdrawalRecord {
+  id: string;
+  ownerId: string;
+  chain: string;
+  assetSymbol: string;
+  toAddress: string;
+  amountNative: number;
+  amountUsd: number;
+  feeUsd: number;
+  status: 'BROADCASTED' | 'BLOCKED_ALLOWLIST' | 'BLOCKED_VELOCITY' | 'BLOCKED_THREAT';
+  reason: string;
+  txHash?: string;
+  createdAt: number;
+}
+
+export interface CustodyWalletSnapshot {
+  ownerId: string;
+  chains: MultiChainWalletAddress[];
+  balances: WalletCurrencyBalance[];
+  allowlist: WithdrawalAllowlistEntry[];
+  velocityPolicy: WalletVelocityPolicy;
+  fxSwaps: FxSwapRecord[];
+  withdrawals: CustodyWithdrawalRecord[];
+  updatedAt: number;
+}
+
+export type VibeSecurityDomain =
+  | 'Secrets & Env Hygiene'
+  | 'Auth & Session Hardening'
+  | 'RBAC & Anti-IDOR Guards'
+  | 'Input Validation & SQL Safety'
+  | 'API Auth & Rate Limiting'
+  | 'Security Headers & Encryption';
+
+export interface VibeSecurityRuleCheck {
+  id: string;
+  domain: VibeSecurityDomain;
+  ruleTitle: string;
+  status: 'PASS' | 'WARN' | 'FAIL';
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  evidence: string;
+  remediation: string;
+}
+
+export interface VibeSecurityAuditReport {
+  auditId: string;
+  overallScorePct: number;
+  passedCount: number;
+  warnCount: number;
+  failCount: number;
+  idorBlockedCount: number;
+  rateLimitGuardActive: boolean;
+  securityHeadersEnforced: string[];
+  checks: VibeSecurityRuleCheck[];
+  executedAt: number;
+}
+
+export interface GeminiEnterpriseAnalysisResult {
+  mode: 'wallet_risk' | 'threat_triage' | 'security_remediation';
+  model: string;
+  verdict: string;
+  riskLevel: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+  summary: string;
+  keyFindings: string[];
+  actionPlan: string[];
+  generatedAt: number;
+}
+
+

@@ -334,6 +334,7 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; worker-src 'self' blob:; connect-src 'self' ws: wss: https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.coinbase.com https://api.exchange.coinbase.com https://query1.finance.yahoo.com https://api.github.com; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://*.google.com; object-src 'none'; base-uri 'self';"
@@ -456,6 +457,8 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       req.path.startsWith('/api/v1/auth/login') ||
       req.path.startsWith('/api/v1/auth/register') ||
       req.path.startsWith('/api/v1/vault') ||
+      req.path.startsWith('/api/v1/wallet') ||
+      req.path.startsWith('/api/v1/ai/enterprise-analyze') ||
       req.path.startsWith('/api/v1/security') ||
       req.path.startsWith('/api/v1/nexus/execute');
 

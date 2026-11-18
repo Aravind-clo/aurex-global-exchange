@@ -157,6 +157,133 @@
         }
       },
       "required": ["ownerId", "symbol", "condition", "targetPrice", "status", "createdAt", "updatedAt"]
+    },
+    "WalletChainRecord": {
+      "title": "WalletChainRecord",
+      "description": "Owner-scoped multi-chain deposit address and spend velocity policy record",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chain": {
+          "type": "string",
+          "enum": ["BTC", "ETH", "SOL", "MATIC", "ARB", "BASE", "TRX"]
+        },
+        "assetSymbol": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 12,
+          "pattern": "^[A-Z0-9]+$"
+        },
+        "depositAddress": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9]+$"
+        },
+        "dailyLimitUsd": {
+          "type": "number"
+        },
+        "strictAllowlist": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "chain", "assetSymbol", "depositAddress", "dailyLimitUsd", "strictAllowlist", "createdAt", "updatedAt"]
+    },
+    "WithdrawalAllowlistEntry": {
+      "title": "WithdrawalAllowlistEntry",
+      "description": "Owner-verified external withdrawal address with enable toggle and threat screening status",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "chain": {
+          "type": "string",
+          "enum": ["BTC", "ETH", "SOL", "MATIC", "ARB", "BASE", "TRX"]
+        },
+        "address": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9]+$"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "threatStatus": {
+          "type": "string",
+          "enum": ["CLEAN", "SUSPICIOUS", "BLOCKED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "label", "chain", "address", "enabled", "threatStatus", "createdAt", "updatedAt"]
+    },
+    "SecurityAuditSnapshot": {
+      "title": "SecurityAuditSnapshot",
+      "description": "Immutable live runtime security audit summary snapshot",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "overallScorePct": {
+          "type": "number"
+        },
+        "passedCount": {
+          "type": "number"
+        },
+        "warnCount": {
+          "type": "number"
+        },
+        "failCount": {
+          "type": "number"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "overallScorePct", "passedCount", "warnCount", "failCount", "summary", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -175,6 +302,18 @@
     "/users/{userId}/alerts/{alertId}": {
       "schema": { "$ref": "#/entities/DeskAlert" },
       "description": "User price alert rules with terminal triggered locking"
+    },
+    "/users/{userId}/wallets/{chainId}": {
+      "schema": { "$ref": "#/entities/WalletChainRecord" },
+      "description": "Owner-scoped multi-chain custody deposit wallet and velocity limits"
+    },
+    "/users/{userId}/allowlists/{entryId}": {
+      "schema": { "$ref": "#/entities/WithdrawalAllowlistEntry" },
+      "description": "Owner-scoped verified withdrawal allowlist destinations"
+    },
+    "/users/{userId}/securityAudits/{auditId}": {
+      "schema": { "$ref": "#/entities/SecurityAuditSnapshot" },
+      "description": "Owner-scoped live vibe-security audit summary records"
     }
   }
 }

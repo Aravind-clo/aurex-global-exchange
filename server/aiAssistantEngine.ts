@@ -1,6 +1,7 @@
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type {
   AuthUser,
+  GeminiEnterpriseAnalysisResult,
   Instrument,
   MlPrediction,
   NewsItem,
@@ -237,3 +238,104 @@ export async function generateAiAssistantResponse(
     };
   }
 }
+
+export class GeminiEnterpriseAnalysisError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function runGeminiEnterpriseAnalysis(params: {
+  mode: GeminiEnterpriseAnalysisResult['mode'];
+  payload: Record<string, unknown>;
+  user?: AuthUser;
+}): Promise<GeminiEnterpriseAnalysisResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    throw new GeminiEnterpriseAnalysisError(
+      503,
+      'Gemini Advanced Analysis Model unavailable: GEMINI_API_KEY is not configured in server environment.'
+    );
+  }
+
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+
+  const modePromptMap: Record<GeminiEnterpriseAnalysisResult['mode'], string> = {
+    wallet_risk:
+      'Analyze multi-chain custody balances, withdrawal allowlist hygiene, 24h velocity caps, and asset exposure risks.',
+    threat_triage:
+      'Analyze suspicious IP/domain/wallet threat intelligence telemetry, anti-phishing indicators, and card BIN issuer signals.',
+    security_remediation:
+      'Analyze vibe-security-skill live audit checks, anti-IDOR blocks, HTTP security headers, and provide prioritized code-level remediation steps.',
+  };
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: [
+        `ANALYSIS MODE: ${params.mode}`,
+        `OBJECTIVE: ${modePromptMap[params.mode]}`,
+        `ACTOR ROLE: ${params.user?.role ?? 'Security Analyst'} (isAdmin=${Boolean(params.user?.isAdmin)})`,
+        `TELEMETRY JSON:\n${JSON.stringify(params.payload).slice(0, 12000)}`,
+      ].join('\n\n'),
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+        systemInstruction:
+          'You are the Aurex Principal Custody Risk & Application Security Architect. Produce strict, concrete, non-fabricated assessments grounded ONLY in the supplied telemetry.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            verdict: { type: Type.STRING },
+            riskLevel: {
+              type: Type.STRING,
+              description: 'Must be one of LOW, MODERATE, HIGH, CRITICAL',
+            },
+            summary: { type: Type.STRING },
+            keyFindings: { type: Type.ARRAY, items: { type: Type.STRING } },
+            actionPlan: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ['verdict', 'riskLevel', 'summary', 'keyFindings', 'actionPlan'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse((response.text ?? '{}').trim()) as Partial<GeminiEnterpriseAnalysisResult>;
+    const validRisk: GeminiEnterpriseAnalysisResult['riskLevel'] =
+      parsed.riskLevel === 'LOW' ||
+      parsed.riskLevel === 'MODERATE' ||
+      parsed.riskLevel === 'HIGH' ||
+      parsed.riskLevel === 'CRITICAL'
+        ? parsed.riskLevel
+        : 'MODERATE';
+
+    return {
+      mode: params.mode,
+      model: 'gemini-4-hydrogen (Thinking HIGH)',
+      verdict: sanitizePlainText(parsed.verdict || 'Assessment Complete', 140),
+      riskLevel: validRisk,
+      summary: sanitizePlainText(parsed.summary || 'Enterprise telemetry evaluated cleanly.', 600),
+      keyFindings: Array.isArray(parsed.keyFindings)
+        ? parsed.keyFindings.slice(0, 8).map((x) => sanitizePlainText(x, 240)).filter(Boolean)
+        : [],
+      actionPlan: Array.isArray(parsed.actionPlan)
+        ? parsed.actionPlan.slice(0, 8).map((x) => sanitizePlainText(x, 240)).filter(Boolean)
+        : [],
+      generatedAt: Date.now(),
+    };
+  } catch (err) {
+    if (err instanceof GeminiEnterpriseAnalysisError) throw err;
+    const msg = err instanceof Error ? err.message : 'Upstream Gemini reasoning request failed.';
+    throw new GeminiEnterpriseAnalysisError(502, `Gemini analysis error: ${msg}`);
+  }
+}
+

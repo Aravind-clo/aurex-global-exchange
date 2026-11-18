@@ -12,13 +12,18 @@ import type {
   AuthUser,
   BankAccountRecord,
   BankRailType,
+  BinLookupResult,
   BotStrategyType,
   BugBountySubmission,
   Candle,
   CcxtConnectorStatus,
+  ChainGasEstimate,
   ChartTimeframe,
+  CoinGeckoCoinTelemetry,
   CommunityContributor,
   CountryGuideline,
+  CustodyWalletSnapshot,
+  CustodyWithdrawalRecord,
   DeskMember,
   DetectedPattern,
   DiagnosticsReport,
@@ -28,6 +33,10 @@ import type {
   ExchangeFeaturesState,
   FirewallIncident,
   FounderAiTeamState,
+  FrankfurterFxBundle,
+  FxSwapQuote,
+  FxSwapRecord,
+  GeminiEnterpriseAnalysisResult,
   GlobalBankDirectoryEntry,
   GlobalMonitorSnapshot,
   HackDefenseAgent,
@@ -58,17 +67,29 @@ import type {
   SocialPost,
   StressTestResult,
   SupportedCurrency,
+  ThreatCheckResult,
   TotpEnrollmentSetup,
   TradeTapeItem,
   TradingBotRecord,
   TrustedDeviceRecord,
   UserRewardsState,
   VaultTransferRecord,
+  VibeSecurityAuditReport,
+  WalletVelocityPolicy,
+  WithdrawalAllowlistEntry,
   WsClientMessage,
   WsServerMessage,
 } from '../types/market';
 import { signInWithPopup } from 'firebase/auth';
-import { auth, googleAuthProvider, syncFirebaseUserProfile } from '../lib/firebase';
+import {
+  auth,
+  deleteAllowlistEntryFromFirestore,
+  googleAuthProvider,
+  syncAllowlistEntryToFirestore,
+  syncFirebaseUserProfile,
+  syncSecurityAuditToFirestore,
+  syncWalletChainToFirestore,
+} from '../lib/firebase';
 import { createEncryptedEnvelopeHeader, setActiveMeshKeyId } from '../utils/clientCrypto';
 import {
   ensureCryptographicDeviceFingerprint,
@@ -348,6 +369,11 @@ export function useMarketSocket() {
   const [adminRewards, setAdminRewards] = useState<AdminRewardsOverview | null>(null);
   const [enterpriseSecurity, setEnterpriseSecurity] = useState<EnterpriseSecuritySnapshot | null>(null);
   const [exchangeFeatures, setExchangeFeatures] = useState<ExchangeFeaturesState | null>(null);
+  const [coingeckoCoins, setCoingeckoCoins] = useState<CoinGeckoCoinTelemetry[]>([]);
+  const [fxBundle, setFxBundle] = useState<FrankfurterFxBundle | null>(null);
+  const [gasEstimates, setGasEstimates] = useState<ChainGasEstimate[]>([]);
+  const [custodyWallet, setCustodyWallet] = useState<CustodyWalletSnapshot | null>(null);
+  const [vibeAudit, setVibeAudit] = useState<VibeSecurityAuditReport | null>(null);
   const [toasts, setToasts] = useState<AlertToast[]>([]);
 
   const pushToast = useCallback((toast: Omit<AlertToast, 'id' | 'createdAt'>) => {
@@ -3603,6 +3629,434 @@ export function useMarketSocket() {
     [pushToast]
   );
 
+  const refreshPublicApisHub = useCallback(async () => {
+    try {
+      const [cgRes, fxRes, gasRes] = await Promise.all([
+        authFetch('/api/v1/public-apis/coingecko'),
+        authFetch('/api/v1/public-apis/fx-rates?base=USD'),
+        authFetch('/api/v1/public-apis/gas-fees'),
+      ]);
+      if (cgRes.ok) {
+        const cgData = (await cgRes.json()) as { coins?: CoinGeckoCoinTelemetry[] };
+        if (Array.isArray(cgData.coins)) setCoingeckoCoins(cgData.coins);
+      }
+      if (fxRes.ok) {
+        const fxData = (await fxRes.json()) as { fx?: FrankfurterFxBundle };
+        if (fxData.fx) setFxBundle(fxData.fx);
+      }
+      if (gasRes.ok) {
+        const gasData = (await gasRes.json()) as { gasEstimates?: ChainGasEstimate[] };
+        if (Array.isArray(gasData.gasEstimates)) setGasEstimates(gasData.gasEstimates);
+      }
+    } catch {
+      // keep cached telemetry
+    }
+  }, []);
+
+  const lookupBin = useCallback(
+    async (bin: string): Promise<BinLookupResult | null> => {
+      try {
+        const res = await authFetch('/api/v1/public-apis/bin-lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bin }),
+        });
+        const data = (await res.json()) as { result?: BinLookupResult; error?: string };
+        if (!res.ok || !data.result) {
+          pushToast({
+            title: 'BIN Lookup Notice',
+            detail: data.error ?? 'Unable to resolve card BIN.',
+            tone: 'negative',
+          });
+          return null;
+        }
+        return data.result;
+      } catch {
+        return null;
+      }
+    },
+    [pushToast]
+  );
+
+  const checkThreat = useCallback(
+    async (target: string): Promise<ThreatCheckResult | null> => {
+      try {
+        const res = await authFetch('/api/v1/public-apis/threat-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target }),
+        });
+        const data = (await res.json()) as { result?: ThreatCheckResult; error?: string };
+        if (!res.ok || !data.result) {
+          pushToast({
+            title: 'Threat Scan Error',
+            detail: data.error ?? 'Unable to scan target.',
+            tone: 'negative',
+          });
+          return null;
+        }
+        return data.result;
+      } catch {
+        return null;
+      }
+    },
+    [pushToast]
+  );
+
+  const refreshCustodyWallet = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/wallet/custody');
+      if (!res.ok) return;
+      const data = (await res.json()) as { custody?: CustodyWalletSnapshot };
+      if (data.custody) {
+        setCustodyWallet(data.custody);
+        const primaryChain = data.custody.chains[0];
+        if (primaryChain) {
+          void syncWalletChainToFirestore({
+            chain: primaryChain.chain,
+            assetSymbol: primaryChain.assetSymbol,
+            depositAddress: primaryChain.address,
+            dailyLimitUsd: data.custody.velocityPolicy.dailyLimitUsd,
+            strictAllowlist: data.custody.velocityPolicy.strictAllowlistOnly,
+          }).catch(() => {});
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const quoteFxSwap = useCallback(
+    async (
+      fromCurrency: string,
+      toCurrency: string,
+      fromAmount: number
+    ): Promise<{ ok: boolean; quote?: FxSwapQuote; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/wallet/fx-swap/quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromCurrency, toCurrency, fromAmount }),
+        });
+        const data = (await res.json()) as { quote?: FxSwapQuote; error?: string };
+        if (!res.ok || !data.quote) {
+          return { ok: false, error: data.error ?? 'Unable to calculate FX swap quote.' };
+        }
+        return { ok: true, quote: data.quote };
+      } catch {
+        return { ok: false, error: 'Network error fetching FX swap quote.' };
+      }
+    },
+    []
+  );
+
+  const executeFxSwap = useCallback(
+    async (
+      fromCurrency: string,
+      toCurrency: string,
+      fromAmount: number
+    ): Promise<{ ok: boolean; swap?: FxSwapRecord; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/wallet/fx-swap/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromCurrency, toCurrency, fromAmount }),
+        });
+        const data = (await res.json()) as {
+          swap?: FxSwapRecord;
+          custody?: CustodyWalletSnapshot;
+          error?: string;
+        };
+        if (data.custody) setCustodyWallet(data.custody);
+        if (!res.ok || !data.swap) {
+          pushToast({
+            title: 'FX Swap Rejected',
+            detail: data.error ?? 'Unable to settle FX swap.',
+            tone: 'negative',
+          });
+          return { ok: false, error: data.error };
+        }
+        pushToast({
+          title: `FX Swap Settled · ${data.swap.fromCurrency} → ${data.swap.toCurrency}`,
+          detail: `Converted ${data.swap.fromAmount} ${data.swap.fromCurrency} to ${data.swap.toAmount} ${data.swap.toCurrency}`,
+          tone: 'positive',
+        });
+        return { ok: true, swap: data.swap };
+      } catch {
+        return { ok: false, error: 'Network error executing FX swap.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const addAllowlistAddress = useCallback(
+    async (
+      label: string,
+      chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX',
+      address: string
+    ): Promise<{ ok: boolean; entry?: WithdrawalAllowlistEntry; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/wallet/allowlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, chain, address }),
+        });
+        const data = (await res.json()) as {
+          entry?: WithdrawalAllowlistEntry;
+          custody?: CustodyWalletSnapshot;
+          error?: string;
+        };
+        if (data.custody) setCustodyWallet(data.custody);
+        if (!res.ok || !data.entry) {
+          pushToast({
+            title: 'Allowlist Addition Blocked',
+            detail: data.error ?? 'Address verification failed.',
+            tone: 'negative',
+          });
+          return { ok: false, error: data.error };
+        }
+        void syncAllowlistEntryToFirestore({
+          id: data.entry.id,
+          label: data.entry.label,
+          chain: data.entry.chain,
+          address: data.entry.address,
+          enabled: data.entry.enabled,
+          threatStatus: data.entry.threatStatus,
+        }).catch(() => {});
+        pushToast({
+          title: `Allowlist Registered · ${data.entry.chain}`,
+          detail: `${data.entry.label} passed anti-phishing & checksum checks.`,
+          tone: 'positive',
+        });
+        return { ok: true, entry: data.entry };
+      } catch {
+        return { ok: false, error: 'Network error adding allowlist address.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const toggleAllowlistAddress = useCallback(
+    async (entryId: string, enabled: boolean): Promise<boolean> => {
+      try {
+        const res = await authFetch(`/api/v1/wallet/allowlist/${encodeURIComponent(entryId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        const data = (await res.json()) as {
+          entry?: WithdrawalAllowlistEntry;
+          custody?: CustodyWalletSnapshot;
+          error?: string;
+        };
+        if (data.custody) setCustodyWallet(data.custody);
+        if (!res.ok || !data.entry) {
+          pushToast({
+            title: 'Allowlist Update Denied',
+            detail: data.error ?? 'Unable to update destination status.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        void syncAllowlistEntryToFirestore({
+          id: data.entry.id,
+          label: data.entry.label,
+          chain: data.entry.chain,
+          address: data.entry.address,
+          enabled: data.entry.enabled,
+          threatStatus: data.entry.threatStatus,
+        }).catch(() => {});
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const removeAllowlistAddress = useCallback(
+    async (entryId: string): Promise<boolean> => {
+      try {
+        const res = await authFetch(`/api/v1/wallet/allowlist/${encodeURIComponent(entryId)}`, {
+          method: 'DELETE',
+        });
+        const data = (await res.json()) as { custody?: CustodyWalletSnapshot; error?: string };
+        if (data.custody) setCustodyWallet(data.custody);
+        if (!res.ok) {
+          pushToast({
+            title: 'Allowlist Deletion Denied',
+            detail: data.error ?? 'Unable to remove destination.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        void deleteAllowlistEntryFromFirestore(entryId).catch(() => {});
+        pushToast({
+          title: 'Allowlist Destination Removed',
+          detail: 'External address revoked from custody whitelist.',
+          tone: 'info',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const updateVelocityPolicy = useCallback(
+    async (patch: Partial<WalletVelocityPolicy>): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/wallet/velocity-policy', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const data = (await res.json()) as {
+          custody?: CustodyWalletSnapshot;
+          policy?: WalletVelocityPolicy;
+          error?: string;
+        };
+        if (data.custody) {
+          setCustodyWallet(data.custody);
+          const primaryChain = data.custody.chains[0];
+          if (primaryChain && data.policy) {
+            void syncWalletChainToFirestore({
+              chain: primaryChain.chain,
+              assetSymbol: primaryChain.assetSymbol,
+              depositAddress: primaryChain.address,
+              dailyLimitUsd: data.policy.dailyLimitUsd,
+              strictAllowlist: data.policy.strictAllowlistOnly,
+            }).catch(() => {});
+          }
+        }
+        if (!res.ok) {
+          pushToast({
+            title: 'Velocity Policy Error',
+            detail: data.error ?? 'Unable to save spend velocity caps.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        pushToast({
+          title: 'Spend Velocity Limits Saved',
+          detail: '24h daily cap & strict allowlist policy updated.',
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const executeGuardedWithdrawal = useCallback(
+    async (
+      chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX',
+      toAddress: string,
+      amountNative: number
+    ): Promise<{ ok: boolean; withdrawal?: CustodyWithdrawalRecord; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/wallet/withdraw', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chain, toAddress, amountNative }),
+        });
+        const data = (await res.json()) as {
+          withdrawal?: CustodyWithdrawalRecord;
+          custody?: CustodyWalletSnapshot;
+          error?: string;
+        };
+        if (data.custody) setCustodyWallet(data.custody);
+        if (!res.ok) {
+          pushToast({
+            title: 'Custody Guard Triggered',
+            detail: data.withdrawal?.reason ?? data.error ?? 'Withdrawal blocked.',
+            tone: 'negative',
+          });
+          return { ok: false, withdrawal: data.withdrawal, error: data.withdrawal?.reason ?? data.error };
+        }
+        pushToast({
+          title: `Withdrawal Broadcast · ${chain}`,
+          detail: `${amountNative} ${data.withdrawal?.assetSymbol ?? chain} cleared allowlist & velocity guard.`,
+          tone: 'positive',
+        });
+        return { ok: true, withdrawal: data.withdrawal };
+      } catch {
+        return { ok: false, error: 'Network error dispatching guarded withdrawal.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const runVibeAudit = useCallback(async (): Promise<VibeSecurityAuditReport | null> => {
+    try {
+      const res = await authFetch('/api/v1/security/vibe-audit/run', { method: 'POST' });
+      const data = (await res.json()) as { report?: VibeSecurityAuditReport };
+      if (!res.ok || !data.report) return null;
+      setVibeAudit(data.report);
+      void syncSecurityAuditToFirestore({
+        auditId: data.report.auditId,
+        overallScorePct: data.report.overallScorePct,
+        passedCount: data.report.passedCount,
+        warnCount: data.report.warnCount,
+        failCount: data.report.failCount,
+        summary: `Score ${data.report.overallScorePct}% (${data.report.passedCount} pass, ${data.report.warnCount} warn, ${data.report.failCount} fail)`,
+      }).catch(() => {});
+      pushToast({
+        title: `Security Audit · ${data.report.overallScorePct}% Score`,
+        detail: `${data.report.passedCount} passed · ${data.report.idorBlockedCount} IDOR probes blocked`,
+        tone: data.report.failCount === 0 ? 'positive' : 'negative',
+      });
+      return data.report;
+    } catch {
+      return null;
+    }
+  }, [pushToast]);
+
+  const runGeminiEnterpriseAnalysis = useCallback(
+    async (
+      mode: GeminiEnterpriseAnalysisResult['mode'],
+      payload?: Record<string, unknown>
+    ): Promise<{ ok: boolean; analysis?: GeminiEnterpriseAnalysisResult; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/ai/enterprise-analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, payload }),
+        });
+        const data = (await res.json()) as {
+          analysis?: GeminiEnterpriseAnalysisResult;
+          error?: string;
+        };
+        if (!res.ok || !data.analysis) {
+          return { ok: false, error: data.error ?? `Gemini analysis unavailable (HTTP ${res.status}).` };
+        }
+        return { ok: true, analysis: data.analysis };
+      } catch {
+        return { ok: false, error: 'Network error contacting Gemini enterprise analysis engine.' };
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    void refreshPublicApisHub();
+    if (!authUser) {
+      setCustodyWallet(null);
+      return;
+    }
+    void refreshCustodyWallet();
+    void authFetch('/api/v1/security/vibe-audit')
+      .then(async (r) => {
+        if (!r.ok) return;
+        const d = (await r.json()) as { report?: VibeSecurityAuditReport };
+        if (d.report) setVibeAudit(d.report);
+      })
+      .catch(() => {});
+  }, [authUser, refreshCustodyWallet, refreshPublicApisHub]);
+
   return {
     connected,
     reconnecting,
@@ -3769,5 +4223,23 @@ export function useMarketSocket() {
     toggleCardFreeze,
     updateCardConfig,
     spendWithCard,
+    coingeckoCoins,
+    fxBundle,
+    gasEstimates,
+    custodyWallet,
+    vibeAudit,
+    refreshPublicApisHub,
+    lookupBin,
+    checkThreat,
+    refreshCustodyWallet,
+    quoteFxSwap,
+    executeFxSwap,
+    addAllowlistAddress,
+    toggleAllowlistAddress,
+    removeAllowlistAddress,
+    updateVelocityPolicy,
+    executeGuardedWithdrawal,
+    runVibeAudit,
+    runGeminiEnterpriseAnalysis,
   };
 }

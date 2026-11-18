@@ -49,6 +49,7 @@ import { AgentsCommandView } from './components/AgentsCommandView';
 import { SmartBotsView } from './components/SmartBotsView';
 import { GlobalMonitorView } from './components/GlobalMonitorView';
 import { SecurityVaultView } from './components/SecurityVaultView';
+import { CustodySecurityHubView } from './components/CustodySecurityHubView';
 import { AdminConsoleView } from './components/AdminConsoleView';
 import { InvestorProfilesView } from './components/InvestorProfilesView';
 import { UserProfileView } from './components/UserProfileView';
@@ -79,6 +80,7 @@ type WorkspaceView =
   | 'investors'
   | 'profile'
   | 'vault'
+  | 'custody'
   | 'guide'
   | 'admin';
 
@@ -237,6 +239,24 @@ export default function App() {
     toggleCardFreeze,
     updateCardConfig,
     spendWithCard,
+    coingeckoCoins,
+    fxBundle,
+    gasEstimates,
+    custodyWallet,
+    vibeAudit,
+    refreshPublicApisHub,
+    lookupBin,
+    checkThreat,
+    refreshCustodyWallet,
+    quoteFxSwap,
+    executeFxSwap,
+    addAllowlistAddress,
+    toggleAllowlistAddress,
+    removeAllowlistAddress,
+    updateVelocityPolicy,
+    executeGuardedWithdrawal,
+    runVibeAudit,
+    runGeminiEnterpriseAnalysis,
   } = useMarketSocket();
 
   const [view, setView] = useState<WorkspaceView>('home');
@@ -488,6 +508,7 @@ export default function App() {
     { id: 'investors', label: 'Investors & KYC', icon: UserCheck },
     { id: 'profile', label: 'Profile & Verify', icon: User },
     { id: 'vault', label: 'Wallet & Vault', icon: Wallet },
+    { id: 'custody', label: 'Security & Custody', icon: ShieldCheck },
     { id: 'guide', label: 'Help & Rules', icon: HelpCircle },
     ...(isFounderAdmin
       ? [{ id: 'admin' as WorkspaceView, label: 'Founder Admin', icon: Database }]
@@ -956,6 +977,7 @@ export default function App() {
                   onToggleFreeze={toggleCardFreeze}
                   onUpdateConfig={updateCardConfig}
                   onSpend={spendWithCard}
+                  onLookupBin={lookupBin}
                 />
               )}
 
@@ -973,6 +995,7 @@ export default function App() {
                   instruments={instruments}
                   predictions={predictions}
                   watchlistSymbols={watchlistSymbols}
+                  coingeckoCoins={coingeckoCoins}
                   guideMode={guideMode}
                   onToggleWatchlist={toggleWatchlistSymbol}
                   onOpenTerminal={openTerminalForSymbol}
@@ -1672,6 +1695,29 @@ export default function App() {
                   onRefreshDiagnostics={fetchDiagnostics}
                   onSolveDiagnostic={solveDiagnosticIssue}
                   onRefreshDefenseAgents={fetchDefenseAgents}
+                />
+              )}
+
+              {view === 'custody' && (
+                <CustodySecurityHubView
+                  custodyWallet={custodyWallet}
+                  coingeckoCoins={coingeckoCoins}
+                  fxBundle={fxBundle}
+                  gasEstimates={gasEstimates}
+                  vibeAudit={vibeAudit}
+                  onRefreshPublicApis={refreshPublicApisHub}
+                  onRefreshCustody={refreshCustodyWallet}
+                  onQuoteFxSwap={quoteFxSwap}
+                  onExecuteFxSwap={executeFxSwap}
+                  onAddAllowlist={addAllowlistAddress}
+                  onToggleAllowlist={toggleAllowlistAddress}
+                  onRemoveAllowlist={removeAllowlistAddress}
+                  onUpdateVelocityPolicy={updateVelocityPolicy}
+                  onExecuteWithdrawal={executeGuardedWithdrawal}
+                  onLookupBin={lookupBin}
+                  onCheckThreat={checkThreat}
+                  onRunVibeAudit={runVibeAudit}
+                  onRunGeminiAnalysis={runGeminiEnterpriseAnalysis}
                 />
               )}
 

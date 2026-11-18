@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
 import {
+  deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
@@ -199,3 +200,146 @@ export async function syncWatchlistSymbolToFirestore(
     handleFirestoreError(error, OperationType.WRITE, itemPath);
   }
 }
+
+function resolveVerifiedFirebaseOwner(): string | null {
+  if (!db || !auth?.currentUser || !auth.currentUser.emailVerified) return null;
+  const safeUid = auth.currentUser.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  return safeUid || null;
+}
+
+export async function syncWalletChainToFirestore(params: {
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  assetSymbol: string;
+  depositAddress: string;
+  dailyLimitUsd: number;
+  strictAllowlist: boolean;
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeChain = params.chain;
+  const safeAsset = params.assetSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+  const safeAddress = params.depositAddress.replace(/[^a-zA-Z0-9]/g, '').slice(0, 128);
+  const safeDailyLimit = Math.min(Math.max(0, Number(params.dailyLimitUsd) || 0), 10_000_000);
+  if (!safeAsset || safeAddress.length < 16) return;
+
+  const docPath = `users/${safeUid}/wallets/${safeChain}`;
+  try {
+    const ref = doc(db, 'users', safeUid, 'wallets', safeChain);
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        chain: safeChain,
+        assetSymbol: safeAsset,
+        depositAddress: safeAddress,
+        dailyLimitUsd: safeDailyLimit,
+        strictAllowlist: Boolean(params.strictAllowlist),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(
+        ref,
+        {
+          dailyLimitUsd: safeDailyLimit,
+          strictAllowlist: Boolean(params.strictAllowlist),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export async function syncAllowlistEntryToFirestore(params: {
+  id: string;
+  label: string;
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  address: string;
+  enabled: boolean;
+  threatStatus: 'CLEAN' | 'SUSPICIOUS' | 'BLOCKED';
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeId = params.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  const safeLabel = (params.label || 'Verified Destination').trim().slice(0, 64);
+  const safeAddress = params.address.replace(/[^a-zA-Z0-9]/g, '').slice(0, 128);
+  if (!safeId || !safeLabel || safeAddress.length < 16) return;
+
+  const docPath = `users/${safeUid}/allowlists/${safeId}`;
+  try {
+    const ref = doc(db, 'users', safeUid, 'allowlists', safeId);
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        label: safeLabel,
+        chain: params.chain,
+        address: safeAddress,
+        enabled: Boolean(params.enabled),
+        threatStatus: params.threatStatus,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(
+        ref,
+        {
+          label: safeLabel,
+          enabled: Boolean(params.enabled),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export async function deleteAllowlistEntryFromFirestore(entryId: string): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeId = entryId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  if (!safeId) return;
+  const docPath = `users/${safeUid}/allowlists/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'users', safeUid, 'allowlists', safeId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, docPath);
+  }
+}
+
+export async function syncSecurityAuditToFirestore(params: {
+  auditId: string;
+  overallScorePct: number;
+  passedCount: number;
+  warnCount: number;
+  failCount: number;
+  summary: string;
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeId = params.auditId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  const safeSummary = (params.summary || 'Runtime security scan completed').slice(0, 240);
+  if (!safeId || safeSummary.length < 4) return;
+  const docPath = `users/${safeUid}/securityAudits/${safeId}`;
+  try {
+    const ref = doc(db, 'users', safeUid, 'securityAudits', safeId);
+    await setDoc(ref, {
+      ownerId: safeUid,
+      overallScorePct: Math.min(100, Math.max(0, Math.round(params.overallScorePct))),
+      passedCount: Math.max(0, Math.round(params.passedCount)),
+      warnCount: Math.max(0, Math.round(params.warnCount)),
+      failCount: Math.max(0, Math.round(params.failCount)),
+      summary: safeSummary,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, docPath);
+  }
+}
+

@@ -122,7 +122,11 @@ import {
   recordAuthTelemetryEvent,
   setAuthEventListener,
 } from './server/adminTelemetryStore.ts';
-import { generateAiAssistantResponse } from './server/aiAssistantEngine.ts';
+import {
+  GeminiEnterpriseAnalysisError,
+  generateAiAssistantResponse,
+  runGeminiEnterpriseAnalysis,
+} from './server/aiAssistantEngine.ts';
 import {
   createWebAuthnChallenge,
   resolveAppBaseUrl,
@@ -165,11 +169,39 @@ import {
   scheduleMarketStatePersist,
 } from './server/workspacePersistence.ts';
 import {
+  deleteAllowlistInCloudSql,
   getOrCreateUser,
   recordAlertInCloudSql,
+  recordAllowlistInCloudSql,
   recordAuthAuditInCloudSql,
+  recordFxSwapInCloudSql,
+  recordIntelligenceLogInCloudSql,
   recordOrderInCloudSql,
+  recordSecurityAuditInCloudSql,
+  syncWalletAccountInCloudSql,
 } from './src/db/users.ts';
+import {
+  checkThreatReputation,
+  fetchCoinGeckoLiveMarkets,
+  fetchFrankfurterFxRates,
+  fetchOnChainGasEstimates,
+  lookupCardBin,
+} from './server/publicApisHub.ts';
+import {
+  addAllowlistAddress,
+  executeFxSwap,
+  executeGuardedWithdrawal,
+  getCustodySnapshot,
+  quoteFxSwap,
+  removeAllowlistAddress,
+  toggleAllowlistAddress,
+  updateVelocityPolicy,
+} from './server/walletCustodyEngine.ts';
+import {
+  getIdorBlockedCount,
+  incrementIdorBlockedCount,
+  runVibeSecurityAudit,
+} from './server/vibeSecurityAuditor.ts';
 import {
   COUNTRY_GUIDELINES,
   GLOBAL_BANK_DIRECTORY,
@@ -1760,6 +1792,460 @@ app.post('/api/v1/ai/assistant', async (req, res) => {
     poweredBy: result.poweredBy,
     timestamp: Date.now(),
   });
+});
+
+function logIdorAttempt(req: express.Request, detail: string) {
+  incrementIdorBlockedCount();
+  const inc: FirewallIncident = {
+    id: `fw-idor-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+    severity: 'CRITICAL',
+    category: 'KEY_ISOLATION',
+    ruleTriggered: `Anti-IDOR Owner Guard (${detail.slice(0, 72)})`,
+    method: req.method,
+    path: req.path,
+    maskedIp: maskClientIp(req),
+    action: 'BLOCKED',
+    createdAt: Date.now(),
+  };
+  securityStatus.totalBlocked += 1;
+  pushFirewallIncident(inc);
+}
+
+function assertOwnerOrAdmin(
+  req: express.Request,
+  res: express.Response,
+  session: ReturnType<typeof extractSessionFromReq>,
+  resourceLabel: string
+): session is NonNullable<ReturnType<typeof extractSessionFromReq>> {
+  if (!session) {
+    res.status(401).json({ error: `Authentication required for ${resourceLabel}.` });
+    return false;
+  }
+  const body = (req.body ?? {}) as { ownerId?: string; userId?: string; targetUserId?: string };
+  const queryOwner =
+    typeof req.query.ownerId === 'string'
+      ? req.query.ownerId
+      : typeof req.query.userId === 'string'
+      ? req.query.userId
+      : undefined;
+  const claimedOwner = body.ownerId || body.userId || body.targetUserId || queryOwner;
+  if (claimedOwner && claimedOwner !== session.user.id && !session.user.isAdmin) {
+    logIdorAttempt(req, `${resourceLabel}: claimed=${claimedOwner} vs actor=${session.user.id}`);
+    res.status(403).json({
+      error: `Blocked by Anti-IDOR Guard: cross-tenant ${resourceLabel} access rejected.`,
+      idorBlockedCount: getIdorBlockedCount(),
+    });
+    return false;
+  }
+  return true;
+}
+
+// --- Public APIs Hub (CoinGecko, Frankfurter ECB FX, Binlist BIN Lookup, Threat IP/Phishing, Gas Fees) ---
+app.get('/api/v1/public-apis/coingecko', async (_req, res) => {
+  try {
+    const coins = await fetchCoinGeckoLiveMarkets(Array.from(instrumentsMap.values()));
+    res.json({ coins, updatedAt: Date.now() });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to fetch CoinGecko telemetry.' });
+  }
+});
+
+app.get('/api/v1/public-apis/fx-rates', async (req, res) => {
+  try {
+    const base = typeof req.query.base === 'string' ? req.query.base : 'USD';
+    const fx = await fetchFrankfurterFxRates(base, (s) => instrumentsMap.get(s)?.price);
+    res.json({ fx });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to fetch ECB FX rates.' });
+  }
+});
+
+app.get('/api/v1/public-apis/gas-fees', async (_req, res) => {
+  try {
+    const gasEstimates = await fetchOnChainGasEstimates((s) => instrumentsMap.get(s)?.price);
+    res.json({ gasEstimates, updatedAt: Date.now() });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to compute gas fees.' });
+  }
+});
+
+app.post('/api/v1/public-apis/bin-lookup', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  const body = (req.body ?? {}) as { bin?: string };
+  const result = await lookupCardBin(body.bin ?? '');
+  if (session) {
+    void recordIntelligenceLogInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      logType: 'BIN_LOOKUP',
+      queryTarget: result.bin || 'INVALID',
+      riskLevel: result.riskTier,
+      summary: `${result.scheme} ${result.bankName} (${result.countryCode})`,
+    }).catch(() => {});
+  }
+  res.json({ result });
+});
+
+app.post('/api/v1/public-apis/threat-check', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  const body = (req.body ?? {}) as { target?: string };
+  const rawTarget = sanitizePlainText(body.target ?? '', 160);
+  if (!rawTarget || rawTarget.length < 3) {
+    res.status(400).json({ error: 'Provide an IP address, domain, URL, or wallet address to scan.' });
+    return;
+  }
+  const result = await checkThreatReputation(rawTarget);
+  if (session) {
+    void recordIntelligenceLogInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      logType: 'THREAT_CHECK',
+      queryTarget: result.target,
+      riskLevel: result.verdict,
+      summary: `${result.targetType.toUpperCase()} score=${result.riskScore}: ${result.indicators[0] ?? 'Clean'}`,
+    }).catch(() => {});
+  }
+  res.json({ result });
+});
+
+// --- Multi-Chain Wallet Custody, Instant FX Swaps, Allowlist & Spend Velocity ---
+app.get('/api/v1/wallet/custody', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'custody wallet')) return;
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+  const custody = getCustodySnapshot(
+    session.user.id,
+    getActiveCashBalance(wsState),
+    (s) => instrumentsMap.get(s)?.price,
+    fx.rates
+  );
+  res.json({ custody });
+});
+
+app.post('/api/v1/wallet/fx-swap/quote', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'FX swap quote')) return;
+  const body = (req.body ?? {}) as { fromCurrency?: string; toCurrency?: string; fromAmount?: number };
+  try {
+    const quote = await quoteFxSwap(
+      body.fromCurrency ?? 'USD',
+      body.toCurrency ?? 'EUR',
+      Number(body.fromAmount ?? 0),
+      (s) => instrumentsMap.get(s)?.price
+    );
+    res.json({ quote });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to quote FX swap.' });
+  }
+});
+
+app.post('/api/v1/wallet/fx-swap/execute', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'FX swap execution')) return;
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  if (wsState.lockdownMode) {
+    res.status(423).json({ error: 'Emergency Lockdown active: currency swaps paused.' });
+    return;
+  }
+  const body = (req.body ?? {}) as { fromCurrency?: string; toCurrency?: string; fromAmount?: number };
+  try {
+    const currentUsd = getActiveCashBalance(wsState);
+    const { swap, updatedUsdCash } = await executeFxSwap(
+      session.user.id,
+      currentUsd,
+      body.fromCurrency ?? 'USD',
+      body.toCurrency ?? 'EUR',
+      Number(body.fromAmount ?? 0),
+      (s) => instrumentsMap.get(s)?.price
+    );
+    if (updatedUsdCash !== currentUsd) {
+      setActiveCashBalance(wsState, updatedUsdCash);
+      persistWorkspacesSnapshot();
+      perfEngine.sendToUser(session.user.id, {
+        type: 'desk:state',
+        payload: buildDeskStatePayload(wsState),
+      });
+    }
+    const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+    const custody = getCustodySnapshot(
+      session.user.id,
+      getActiveCashBalance(wsState),
+      (s) => instrumentsMap.get(s)?.price,
+      fx.rates
+    );
+    void recordFxSwapInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      externalSwapId: swap.id,
+      fromCurrency: swap.fromCurrency,
+      toCurrency: swap.toCurrency,
+      fromAmount: swap.fromAmount,
+      toAmount: swap.toAmount,
+      rate: swap.rate,
+      feeUsd: swap.feeUsd,
+      rateSource: swap.rateSource,
+    }).catch(() => {});
+    res.status(201).json({ swap, custody });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'FX swap failed.' });
+  }
+});
+
+app.post('/api/v1/wallet/allowlist', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'withdrawal allowlist')) return;
+  const body = (req.body ?? {}) as {
+    label?: string;
+    chain?: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+    address?: string;
+  };
+  try {
+    const chain = body.chain ?? 'ETH';
+    const entry = await addAllowlistAddress(
+      session.user.id,
+      body.label ?? 'Trusted Cold Address',
+      chain,
+      body.address ?? ''
+    );
+    const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+    const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+    const custody = getCustodySnapshot(
+      session.user.id,
+      getActiveCashBalance(wsState),
+      (s) => instrumentsMap.get(s)?.price,
+      fx.rates
+    );
+    void recordAllowlistInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      externalId: entry.id,
+      label: entry.label,
+      chain: entry.chain,
+      address: entry.address,
+      enabled: entry.enabled,
+      threatStatus: entry.threatStatus,
+    }).catch(() => {});
+    res.status(201).json({ entry, custody });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Allowlist addition failed.' });
+  }
+});
+
+app.patch('/api/v1/wallet/allowlist/:id', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'withdrawal allowlist')) return;
+  const body = (req.body ?? {}) as { enabled?: boolean };
+  try {
+    const entry = toggleAllowlistAddress(
+      session.user.id,
+      req.params.id,
+      Boolean(body.enabled),
+      session.user.isAdmin
+    );
+    const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+    const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+    const custody = getCustodySnapshot(
+      session.user.id,
+      getActiveCashBalance(wsState),
+      (s) => instrumentsMap.get(s)?.price,
+      fx.rates
+    );
+    void recordAllowlistInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      externalId: entry.id,
+      label: entry.label,
+      chain: entry.chain,
+      address: entry.address,
+      enabled: entry.enabled,
+      threatStatus: entry.threatStatus,
+    }).catch(() => {});
+    res.json({ entry, custody });
+  } catch (err) {
+    const code = (err as Error & { code?: string }).code;
+    if (code === 'FORBIDDEN_IDOR') {
+      logIdorAttempt(req, `PATCH allowlist/${req.params.id}`);
+      res.status(403).json({ error: (err as Error).message, idorBlockedCount: getIdorBlockedCount() });
+      return;
+    }
+    res.status(code === 'NOT_FOUND' ? 404 : 400).json({ error: err instanceof Error ? err.message : 'Allowlist update failed.' });
+  }
+});
+
+app.delete('/api/v1/wallet/allowlist/:id', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'withdrawal allowlist')) return;
+  try {
+    const deleted = removeAllowlistAddress(session.user.id, req.params.id, session.user.isAdmin);
+    const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+    const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+    const custody = getCustodySnapshot(
+      session.user.id,
+      getActiveCashBalance(wsState),
+      (s) => instrumentsMap.get(s)?.price,
+      fx.rates
+    );
+    void deleteAllowlistInCloudSql({ uid: session.user.id, externalId: deleted.deletedId }).catch(() => {});
+    res.json({ ok: true, deletedId: deleted.deletedId, custody });
+  } catch (err) {
+    const code = (err as Error & { code?: string }).code;
+    if (code === 'FORBIDDEN_IDOR') {
+      logIdorAttempt(req, `DELETE allowlist/${req.params.id}`);
+      res.status(403).json({ error: (err as Error).message, idorBlockedCount: getIdorBlockedCount() });
+      return;
+    }
+    res.status(code === 'NOT_FOUND' ? 404 : 400).json({ error: err instanceof Error ? err.message : 'Allowlist deletion failed.' });
+  }
+});
+
+app.put('/api/v1/wallet/velocity-policy', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'velocity policy')) return;
+  const body = (req.body ?? {}) as {
+    dailyLimitUsd?: number;
+    singleTxLimitUsd?: number;
+    strictAllowlistOnly?: boolean;
+  };
+  const policy = updateVelocityPolicy(session.user.id, body);
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+  const custody = getCustodySnapshot(
+    session.user.id,
+    getActiveCashBalance(wsState),
+    (s) => instrumentsMap.get(s)?.price,
+    fx.rates
+  );
+  for (const ch of custody.chains.slice(0, 3)) {
+    void syncWalletAccountInCloudSql({
+      uid: session.user.id,
+      email: session.user.email,
+      chain: ch.chain,
+      assetSymbol: ch.assetSymbol,
+      depositAddress: ch.address,
+      balanceNative: ch.balanceNative,
+      balanceUsd: ch.balanceUsd,
+      dailyLimitUsd: policy.dailyLimitUsd,
+      singleTxLimitUsd: policy.singleTxLimitUsd,
+      spent24hUsd: policy.spentLast24hUsd,
+      strictAllowlist: policy.strictAllowlistOnly,
+    }).catch(() => {});
+  }
+  res.json({ policy, custody });
+});
+
+app.post('/api/v1/wallet/withdraw', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'on-chain withdrawal')) return;
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const body = (req.body ?? {}) as {
+    chain?: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+    toAddress?: string;
+    amountNative?: number;
+  };
+  try {
+    const withdrawal = await executeGuardedWithdrawal(
+      session.user.id,
+      {
+        chain: body.chain ?? 'ETH',
+        toAddress: body.toAddress ?? '',
+        amountNative: Number(body.amountNative ?? 0),
+      },
+      wsState.lockdownMode,
+      (s) => instrumentsMap.get(s)?.price
+    );
+    const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
+    const custody = getCustodySnapshot(
+      session.user.id,
+      getActiveCashBalance(wsState),
+      (s) => instrumentsMap.get(s)?.price,
+      fx.rates
+    );
+    const httpStatus = withdrawal.status === 'BROADCASTED' ? 201 : 403;
+    res.status(httpStatus).json({ withdrawal, custody });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Guarded withdrawal failed.' });
+  }
+});
+
+// --- vibe-security-skill Live Runtime Security Auditor & Gemini 4 Hydrogen Analyzer ---
+app.get('/api/v1/security/vibe-audit', (_req, res) => {
+  const report = runVibeSecurityAudit({
+    firewallActive: securityStatus.firewallActive,
+    lockdownMode: securityStatus.lockdownMode,
+    rateLimitActive: true,
+  });
+  res.json({ report });
+});
+
+app.post('/api/v1/security/vibe-audit/run', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'vibe security audit')) return;
+  const report = runVibeSecurityAudit({
+    firewallActive: securityStatus.firewallActive,
+    lockdownMode: securityStatus.lockdownMode,
+    rateLimitActive: true,
+  });
+  void recordSecurityAuditInCloudSql({
+    uid: session.user.id,
+    email: session.user.email,
+    externalAuditId: report.auditId,
+    overallScorePct: report.overallScorePct,
+    passedCount: report.passedCount,
+    warnCount: report.warnCount,
+    failCount: report.failCount,
+    summary: `Score ${report.overallScorePct}% (${report.passedCount} pass, ${report.warnCount} warn, ${report.failCount} fail, ${report.idorBlockedCount} IDOR blocked)`,
+    findingsJson: JSON.stringify(report.checks),
+  }).catch(() => {});
+  res.json({ report });
+});
+
+app.post('/api/v1/ai/enterprise-analyze', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!assertOwnerOrAdmin(req, res, session, 'Gemini enterprise analyzer')) return;
+  const body = (req.body ?? {}) as {
+    mode?: 'wallet_risk' | 'threat_triage' | 'security_remediation';
+    payload?: Record<string, unknown>;
+  };
+  const validMode =
+    body.mode === 'threat_triage' || body.mode === 'security_remediation'
+      ? body.mode
+      : 'wallet_risk';
+
+  try {
+    const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+    const enrichedPayload =
+      body.payload && Object.keys(body.payload).length > 0
+        ? body.payload
+        : validMode === 'security_remediation'
+        ? {
+            auditReport: runVibeSecurityAudit({
+              firewallActive: securityStatus.firewallActive,
+              lockdownMode: securityStatus.lockdownMode,
+              rateLimitActive: true,
+            }),
+            ddos: getDdosTelemetry(),
+          }
+        : {
+            custody: getCustodySnapshot(
+              session.user.id,
+              getActiveCashBalance(wsState),
+              (s) => instrumentsMap.get(s)?.price
+            ),
+          };
+    const analysis = await runGeminiEnterpriseAnalysis({
+      mode: validMode,
+      payload: enrichedPayload,
+      user: session.user,
+    });
+    res.json({ analysis });
+  } catch (err) {
+    if (err instanceof GeminiEnterpriseAnalysisError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Enterprise analysis failed.' });
+  }
 });
 
 function runAndRecordNexusEvaluation(symbol: string, actor = 'NEXUS Orchestrator'): NexusConsensusReport | null {
