@@ -1,5 +1,5 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
 import {
   doc,
   getDoc,
@@ -7,12 +7,22 @@ import {
   getFirestore,
   serverTimestamp,
   setDoc,
+  type Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+const resolvedApiKey =
+  (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined)?.trim() ||
+  firebaseConfig.apiKey ||
+  '';
+
+const app: FirebaseApp | null = resolvedApiKey
+  ? initializeApp({ ...firebaseConfig, apiKey: resolvedApiKey })
+  : null;
+export const db: Firestore | null = app
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : null;
+export const auth: Auth | null = app ? getAuth(app) : null;
 export const googleAuthProvider = new GoogleAuthProvider();
 
 export enum OperationType {
@@ -49,13 +59,13 @@ export function handleFirestoreError(
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
+      tenantId: auth?.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
+        auth?.currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
           email: provider.email,
         })) || [],
@@ -68,6 +78,7 @@ export function handleFirestoreError(
 }
 
 async function testConnection() {
+  if (!db) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -86,6 +97,7 @@ export async function syncFirebaseUserProfile(params: {
   marketFocus?: string;
   experienceMode?: 'newbie' | 'pro';
 }): Promise<void> {
+  if (!db) return;
   const safeUid = params.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
   if (!safeUid) return;
 
@@ -154,6 +166,7 @@ export async function syncWatchlistSymbolToFirestore(
   symbol: string,
   note = ''
 ): Promise<void> {
+  if (!db || !auth) return;
   const current = auth.currentUser;
   if (!current || !current.emailVerified) return;
   const safeUid = current.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);

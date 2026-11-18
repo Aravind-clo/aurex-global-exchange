@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  BarChart3,
   Bell,
   Bot,
   CandlestickChart,
+  Clock,
   Cpu,
+  CreditCard,
   Database,
   Globe,
   HelpCircle,
+  Home,
   Keyboard,
   Lock,
   LogOut,
@@ -16,7 +20,9 @@ import {
   Radio,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Sun,
+  TrendingUp,
   User,
   UserCheck,
   Wallet,
@@ -25,10 +31,17 @@ import {
 import { useMarketSocket } from './hooks/useMarketSocket';
 import { AuthScreen } from './components/AuthScreen';
 import { BrandMark } from './components/BrandMark';
+import { HomePortfolioView } from './components/HomePortfolioView';
 import { MarketChart } from './components/MarketChart';
 import { OrderBookPanel } from './components/OrderBookPanel';
 import { OrderTicket } from './components/OrderTicket';
 import { OverviewSignalsView } from './components/OverviewSignalsView';
+import { PortfolioAnalyticsView } from './components/PortfolioAnalyticsView';
+import {
+  AurexCardView,
+  ExchangeActivityView,
+  PredictMarketsView,
+} from './components/PredictCardActivityViews';
 import { ScreenerView } from './components/ScreenerView';
 import { NewsSentimentView } from './components/NewsSentimentView';
 import { MarketGuideView } from './components/MarketGuideView';
@@ -52,8 +65,13 @@ import {
 import type { ChartTimeframe, Position } from './types/market';
 
 type WorkspaceView =
+  | 'home'
   | 'screener'
   | 'terminal'
+  | 'analytics'
+  | 'predict'
+  | 'card'
+  | 'activity'
   | 'agents'
   | 'bots'
   | 'monitor'
@@ -65,15 +83,16 @@ type WorkspaceView =
   | 'admin';
 
 const FOUNDER_EMAIL = 'vemulavankeswararao@gmail.com';
+const WATCHLIST_STORAGE_KEY = 'aurex_watchlist_v1';
 
 const WATCHLIST_SYMBOLS = [
   'BTC-USD',
   'ETH-USD',
+  'SOL-USD',
+  'XRP-USD',
   'NVDA',
   'RELIANCE.NS',
-  'TCS.NS',
   'USD-INR',
-  'EUR-USD',
   'XAU-USD',
 ];
 
@@ -209,9 +228,43 @@ export default function App() {
     submitBugBounty,
     runAutomatedPentest,
     downloadSanitizedPolicyBundle,
+    exchangeFeatures,
+    fetchServerPortfolioAnalytics,
+    stakeAsset,
+    unstakeAsset,
+    placePrediction,
+    settlePrediction,
+    toggleCardFreeze,
+    updateCardConfig,
+    spendWithCard,
   } = useMarketSocket();
 
-  const [view, setView] = useState<WorkspaceView>('terminal');
+  const [view, setView] = useState<WorkspaceView>('home');
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(() => {
+    try {
+      const saved = window.localStorage.getItem(WATCHLIST_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter((s): s is string => typeof s === 'string');
+        }
+      }
+    } catch {
+      // ignore storage failure
+    }
+    return WATCHLIST_SYMBOLS;
+  });
+  const toggleWatchlistSymbol = (sym: string) => {
+    setWatchlistSymbols((prev) => {
+      const next = prev.includes(sym) ? prev.filter((s) => s !== sym) : [sym, ...prev].slice(0, 24);
+      try {
+        window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
   const [signalsSubTab, setSignalsSubTab] = useState<'signals' | 'agents' | 'news'>('signals');
   const [darkMode, setDarkMode] = useState(true);
   const [guideMode, setGuideMode] = useState(true);
@@ -421,8 +474,13 @@ export default function App() {
   };
 
   const navItems: Array<{ id: WorkspaceView; label: string; icon: typeof Activity }> = [
-    { id: 'screener', label: 'Markets', icon: SlidersHorizontal },
-    { id: 'terminal', label: 'Trade', icon: CandlestickChart },
+    { id: 'home', label: 'Portfolio Home', icon: Home },
+    { id: 'screener', label: 'Markets & Heatmap', icon: SlidersHorizontal },
+    { id: 'terminal', label: 'Trade Terminal', icon: CandlestickChart },
+    { id: 'analytics', label: 'Portfolio Analytics', icon: BarChart3 },
+    { id: 'predict', label: 'Predict & Stake', icon: Sparkles },
+    { id: 'card', label: 'Aurex Card', icon: CreditCard },
+    { id: 'activity', label: 'Activity Ledger', icon: Clock },
     { id: 'agents', label: 'AI Agents', icon: Bot },
     { id: 'bots', label: 'Smart Bots', icon: Cpu },
     { id: 'monitor', label: 'Global Monitor', icon: Globe },
@@ -436,7 +494,7 @@ export default function App() {
       : []),
   ];
 
-  const activeViewTitle = navItems.find((n) => n.id === view)?.label ?? 'Trade';
+  const activeViewTitle = navItems.find((n) => n.id === view)?.label ?? 'Portfolio Home';
 
   const openOrders = orders.filter((o) => o.status === 'open');
   const filledOrders = orders.filter((o) => o.status !== 'open');
@@ -521,15 +579,15 @@ export default function App() {
 
       {/* Left Sidebar Navigation */}
       <aside
-        className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-[232px] shrink-0 flex flex-col bg-white dark:bg-[#181A20] border-r border-slate-200 dark:border-[#2B3139] transition-transform duration-200 ${
+        className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-[232px] shrink-0 flex flex-col bg-white dark:bg-[#090A0D] border-r border-slate-200 dark:border-[#24262C] transition-transform duration-200 ${
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
         {/* Brand Zone */}
-        <div className="h-14 px-5 flex items-center justify-between border-b border-slate-200 dark:border-[#2B3139] shrink-0">
+        <div className="h-14 px-5 flex items-center justify-between border-b border-slate-200 dark:border-[#24262C] shrink-0">
           <button
             type="button"
-            onClick={() => setView('terminal')}
+            onClick={() => setView('home')}
             className="text-left whitespace-nowrap shrink-0"
             aria-label="Aurex Global Exchange Home"
           >
@@ -546,7 +604,7 @@ export default function App() {
         </div>
 
         {/* Navigation Links */}
-        <nav className="p-3 space-y-1">
+        <nav className="p-3 space-y-1 overflow-y-auto max-h-[56vh]">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = view === item.id;
@@ -558,10 +616,10 @@ export default function App() {
                   setView(item.id);
                   setMobileNavOpen(false);
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${
                   active
-                    ? 'bg-[#F0B90B] text-[#0B0E11]'
-                    : 'text-slate-600 dark:text-[#848E9C] hover:bg-slate-100 dark:hover:bg-[#2B3139]/60 hover:text-slate-900 dark:hover:text-[#EAECEF]'
+                    ? 'bg-[#F59E0B] text-[#090A0C]'
+                    : 'text-slate-600 dark:text-[#8B919E] hover:bg-slate-100 dark:hover:bg-[#191B22] hover:text-slate-900 dark:hover:text-[#EAECEF]'
                 }`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
@@ -572,12 +630,12 @@ export default function App() {
         </nav>
 
         {/* Live Watchlist Quick-Switch */}
-        <div className="flex-1 overflow-y-auto px-3 py-2 border-t border-slate-200 dark:border-[#2B3139]">
+        <div className="flex-1 overflow-y-auto px-3 py-2 border-t border-slate-200 dark:border-[#24262C]">
           <div className="px-2 py-1.5 text-[11px] font-medium text-slate-500 dark:text-[#848E9C]">
             Quick Markets
           </div>
           <div className="space-y-0.5">
-            {WATCHLIST_SYMBOLS.map((sym) => {
+            {watchlistSymbols.map((sym) => {
               const inst = instruments.find((i) => i.symbol === sym);
               const isSelected = activeSymbol === sym;
               const isPos = (inst?.changePct ?? 0) >= 0;
@@ -682,7 +740,7 @@ export default function App() {
       {/* Main Content Shell */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Top Bar */}
-        <header className="sticky top-0 z-20 h-14 px-4 sm:px-6 flex items-center justify-between gap-4 bg-white/95 dark:bg-[#181A20]/95 backdrop-blur-sm border-b border-slate-200 dark:border-[#2B3139]">
+        <header className="sticky top-0 z-20 h-14 px-4 sm:px-6 flex items-center justify-between gap-4 bg-white/95 dark:bg-[#090A0D]/95 backdrop-blur-sm border-b border-slate-200 dark:border-[#24262C]">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -846,11 +904,77 @@ export default function App() {
             </div>
           ) : (
             <>
+              {view === 'home' && (
+                <HomePortfolioView
+                  accountMode={accountMode}
+                  cashBalance={cashBalance}
+                  vaultBalanceUsd={vaultBalanceUsd}
+                  positions={positions}
+                  instruments={instruments}
+                  predictions={predictions}
+                  exchangeFeatures={exchangeFeatures}
+                  onSwitchAccountMode={switchAccountMode}
+                  onOpenTerminal={openTerminalForSymbol}
+                  onNavigate={(target) => setView(target)}
+                  onStake={stakeAsset}
+                  onUnstake={unstakeAsset}
+                />
+              )}
+
+              {view === 'analytics' && (
+                <PortfolioAnalyticsView
+                  positions={positions}
+                  instruments={instruments}
+                  predictions={predictions}
+                  cashBalance={cashBalance}
+                  vaultBalanceUsd={vaultBalanceUsd}
+                  accountMode={accountMode}
+                  darkMode={darkMode}
+                  onOpenTerminal={openTerminalForSymbol}
+                  onFetchServerAnalytics={fetchServerPortfolioAnalytics}
+                />
+              )}
+
+              {view === 'predict' && (
+                <PredictMarketsView
+                  cashBalance={cashBalance}
+                  instruments={instruments}
+                  predictions={predictions}
+                  exchangeFeatures={exchangeFeatures}
+                  onPlacePrediction={placePrediction}
+                  onSettlePrediction={settlePrediction}
+                  onStake={stakeAsset}
+                  onUnstake={unstakeAsset}
+                  onOpenTerminal={openTerminalForSymbol}
+                />
+              )}
+
+              {view === 'card' && (
+                <AurexCardView
+                  cashBalance={cashBalance}
+                  exchangeFeatures={exchangeFeatures}
+                  onToggleFreeze={toggleCardFreeze}
+                  onUpdateConfig={updateCardConfig}
+                  onSpend={spendWithCard}
+                />
+              )}
+
+              {view === 'activity' && (
+                <ExchangeActivityView
+                  orders={orders}
+                  vaultTransfers={vaultTransfers}
+                  exchangeFeatures={exchangeFeatures}
+                  onOpenTerminal={openTerminalForSymbol}
+                />
+              )}
+
               {view === 'screener' && (
                 <ScreenerView
                   instruments={instruments}
                   predictions={predictions}
+                  watchlistSymbols={watchlistSymbols}
                   guideMode={guideMode}
+                  onToggleWatchlist={toggleWatchlistSymbol}
                   onOpenTerminal={openTerminalForSymbol}
                   onArmAlert={(sym, cond, price, note) =>
                     createAlert({ symbol: sym, condition: cond, targetPrice: price, note })
@@ -1629,18 +1753,18 @@ export default function App() {
         </footer>
       </div>
 
-      {/* Mobile Compact Bottom Quick-Nav Bar */}
+      {/* Mobile Compact Bottom Quick-Nav Bar (Screenshot 5-Tab Layout) */}
       <nav
         aria-label="Mobile quick navigation"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-white/95 dark:bg-[#181A20]/95 backdrop-blur-sm border-t border-slate-200 dark:border-[#2B3139] grid grid-cols-5 px-1 pb-[env(safe-area-inset-bottom)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-white/95 dark:bg-[#090A0D]/95 backdrop-blur-sm border-t border-slate-200 dark:border-[#24262C] grid grid-cols-5 px-1 pb-[env(safe-area-inset-bottom)]"
       >
         {(
           [
-            { id: 'screener', label: 'Markets', icon: SlidersHorizontal },
-            { id: 'terminal', label: 'Trade', icon: CandlestickChart },
-            { id: 'agents', label: 'Agents', icon: Bot },
-            { id: 'investors', label: 'Investors', icon: UserCheck },
-            { id: 'vault', label: 'Wallet', icon: Wallet },
+            { id: 'home', label: 'Home', icon: Home },
+            { id: 'predict', label: 'Predict', icon: Sparkles },
+            { id: 'terminal', label: 'Invest', icon: TrendingUp },
+            { id: 'card', label: 'Card', icon: CreditCard },
+            { id: 'activity', label: 'Activity', icon: Clock },
           ] as const
         ).map((item) => {
           const Icon = item.icon;
@@ -1651,7 +1775,7 @@ export default function App() {
               type="button"
               onClick={() => setView(item.id)}
               className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] text-[10px] font-medium transition-colors ${
-                active ? 'text-[#F0B90B]' : 'text-slate-500 dark:text-[#848E9C]'
+                active ? 'text-[#F59E0B]' : 'text-slate-500 dark:text-[#8B919E]'
               }`}
             >
               <Icon className="w-4 h-4" />

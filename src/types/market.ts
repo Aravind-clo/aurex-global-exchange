@@ -1395,3 +1395,86 @@ export interface PortfolioAnalyticsReport {
   correlations: PortfolioCorrelationCell[];
   computedAt: number;
 }
+
+export interface StakingPool {
+  id: string;
+  symbol: string;
+  assetName: string;
+  apyPct: number;
+  lockTermLabel: string;
+  minStakeUsd: number;
+  tvlUsd: number;
+  accentColor: string;
+}
+
+export interface StakingPosition {
+  id: string;
+  poolId: string;
+  symbol: string;
+  assetName: string;
+  amountUsd: number;
+  apyPct: number;
+  accruedRewardUsd: number;
+  stakedAt: number;
+}
+
+export interface PredictionContract {
+  id: string;
+  title: string;
+  symbol: string;
+  horizonLabel: string;
+  durationSec: number;
+  upOddsMultiplier: number;
+  downOddsMultiplier: number;
+  category: 'Crypto' | 'Equities' | 'Macro';
+}
+
+export interface PredictionBet {
+  id: string;
+  contractId: string;
+  title: string;
+  symbol: string;
+  horizonLabel: string;
+  direction: 'UP' | 'DOWN';
+  stakeUsd: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnlUsd: number;
+  unrealizedPnlPct: number;
+  expiresAt: number;
+  status: 'OPEN' | 'SETTLED_WIN' | 'SETTLED_LOSS';
+  createdAt: number;
+}
+
+export interface CardTransaction {
+  id: string;
+  merchant: string;
+  category: string;
+  amountUsd: number;
+  cashbackUsd: number;
+  cashbackAsset: 'BTC' | 'SOL' | 'USDT';
+  status: 'COMPLETED' | 'DECLINED_FROZEN';
+  createdAt: number;
+}
+
+export interface CardProfile {
+  cardNumberMasked: string;
+  holderName: string;
+  tier: 'Obsidian Metal' | 'Amber Sovereign';
+  frozen: boolean;
+  dailyLimitUsd: number;
+  spentTodayUsd: number;
+  cashbackAsset: 'BTC' | 'SOL' | 'USDT';
+  cashbackRatePct: number;
+  totalCashbackEarnedUsd: number;
+  transactions: CardTransaction[];
+}
+
+export interface ExchangeFeaturesState {
+  stakingPools: StakingPool[];
+  stakingPositions: StakingPosition[];
+  predictionContracts: PredictionContract[];
+  predictionBets: PredictionBet[];
+  cardProfile: CardProfile;
+}
+

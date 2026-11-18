@@ -25,6 +25,7 @@ import type {
   EncryptedNetworkTelemetry,
   EngineMetrics,
   EnterpriseSecuritySnapshot,
+  ExchangeFeaturesState,
   FirewallIncident,
   FounderAiTeamState,
   GlobalBankDirectoryEntry,
@@ -46,6 +47,7 @@ import type {
   OrderBook,
   PasskeyCredentialInfo,
   PentestReport,
+  PortfolioAnalyticsReport,
   Position,
   PriceAlert,
   ReferralPromoProfile,
@@ -345,6 +347,7 @@ export function useMarketSocket() {
   const [founderAiTeam, setFounderAiTeam] = useState<FounderAiTeamState | null>(null);
   const [adminRewards, setAdminRewards] = useState<AdminRewardsOverview | null>(null);
   const [enterpriseSecurity, setEnterpriseSecurity] = useState<EnterpriseSecuritySnapshot | null>(null);
+  const [exchangeFeatures, setExchangeFeatures] = useState<ExchangeFeaturesState | null>(null);
   const [toasts, setToasts] = useState<AlertToast[]>([]);
 
   const pushToast = useCallback((toast: Omit<AlertToast, 'id' | 'createdAt'>) => {
@@ -2067,6 +2070,13 @@ export function useMarketSocket() {
       missingEnvVars?: string[];
     }> => {
       if (provider === 'google') {
+        if (!auth) {
+          return {
+            ok: false,
+            configured: false,
+            error: 'Set VITE_FIREBASE_API_KEY in environment to enable Firebase Google Sign-In.',
+          };
+        }
         try {
           const cred = await signInWithPopup(auth, googleAuthProvider);
           const idToken = await cred.user.getIdToken();
@@ -2289,6 +2299,17 @@ export function useMarketSocket() {
     }
   }, []);
 
+  const fetchExchangeFeatures = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/exchange/features');
+      if (!res.ok) return;
+      const data = (await res.json()) as { features?: ExchangeFeaturesState };
+      if (data.features) setExchangeFeatures(data.features);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     const isFounder =
       authUser?.email.trim().toLowerCase() === 'vemulavankeswararao@gmail.com' &&
@@ -2297,6 +2318,7 @@ export function useMarketSocket() {
       void fetchRewardsAndSocial();
       void fetchBots();
       void fetchEnterpriseSecurity();
+      void fetchExchangeFeatures();
       void authFetch('/api/v1/promo/me')
         .then(async (res) => {
           if (!res.ok) return;
@@ -2310,6 +2332,7 @@ export function useMarketSocket() {
       setRewardsState(null);
       setSocialGraph(null);
       setEnterpriseSecurity(null);
+      setExchangeFeatures(null);
     }
 
     if (isFounder) {
@@ -3327,6 +3350,259 @@ export function useMarketSocket() {
     }
   }, [pushToast]);
 
+  const fetchServerPortfolioAnalytics = useCallback(
+    async (riskFreeRatePct = 4.25): Promise<PortfolioAnalyticsReport | null> => {
+      try {
+        const res = await authFetch(`/api/v1/portfolio/analytics?rf=${encodeURIComponent(String(riskFreeRatePct))}`);
+        if (!res.ok) return null;
+        const data = (await res.json()) as { report?: PortfolioAnalyticsReport };
+        return data.report ?? null;
+      } catch {
+        return null;
+      }
+    },
+    []
+  );
+
+  const stakeAsset = useCallback(
+    async (poolId: string, amountUsd: number): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/staking/stake', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId, amountUsd }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          features?: ExchangeFeaturesState;
+          cashBalance?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          pushToast({
+            title: 'Staking Rejected',
+            detail: data.error ?? 'Could not stake funds.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        if (data.features) setExchangeFeatures(data.features);
+        if (typeof data.cashBalance === 'number') setCashBalance(data.cashBalance);
+        pushToast({
+          title: 'Staking Position Active',
+          detail: `Staked $${amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} into yield vault.`,
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const unstakeAsset = useCallback(
+    async (positionId: string): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/staking/unstake', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionId }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          creditedUsd?: number;
+          features?: ExchangeFeaturesState;
+          cashBalance?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          pushToast({
+            title: 'Redemption Failed',
+            detail: data.error ?? 'Could not redeem position.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        if (data.features) setExchangeFeatures(data.features);
+        if (typeof data.cashBalance === 'number') setCashBalance(data.cashBalance);
+        pushToast({
+          title: 'Staking Principal & Yield Redeemed',
+          detail: `Credited $${(data.creditedUsd ?? 0).toFixed(2)} to active balance.`,
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const placePrediction = useCallback(
+    async (contractId: string, direction: 'UP' | 'DOWN', stakeUsd: number): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/predictions/bet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contractId, direction, stakeUsd }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          features?: ExchangeFeaturesState;
+          cashBalance?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          pushToast({
+            title: 'Prediction Order Rejected',
+            detail: data.error ?? 'Unable to open prediction.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        if (data.features) setExchangeFeatures(data.features);
+        if (typeof data.cashBalance === 'number') setCashBalance(data.cashBalance);
+        pushToast({
+          title: `Prediction Opened (${direction})`,
+          detail: `Staked $${stakeUsd.toFixed(2)} with live WebSocket mark-to-market.`,
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const settlePrediction = useCallback(
+    async (betId: string): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/predictions/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ betId }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          creditedUsd?: number;
+          features?: ExchangeFeaturesState;
+          cashBalance?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          pushToast({
+            title: 'Settlement Error',
+            detail: data.error ?? 'Unable to settle prediction.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        if (data.features) setExchangeFeatures(data.features);
+        if (typeof data.cashBalance === 'number') setCashBalance(data.cashBalance);
+        pushToast({
+          title: 'Prediction Settled',
+          detail: `Returned $${(data.creditedUsd ?? 0).toFixed(2)} to active balance.`,
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const toggleCardFreeze = useCallback(
+    async (frozen: boolean): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/card/toggle-freeze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frozen }),
+        });
+        const data = (await res.json()) as { features?: ExchangeFeaturesState };
+        if (!res.ok) return false;
+        if (data.features) setExchangeFeatures(data.features);
+        pushToast({
+          title: frozen ? 'Aurex Card Frozen' : 'Aurex Card Unfrozen',
+          detail: frozen
+            ? 'All card authorizations are now blocked immediately.'
+            : 'Merchant spend & cashback rewards re-enabled.',
+          tone: frozen ? 'info' : 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const updateCardConfig = useCallback(
+    async (cfg: { cashbackAsset?: 'BTC' | 'SOL' | 'USDT'; dailyLimitUsd?: number }): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/card/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cfg),
+        });
+        const data = (await res.json()) as { features?: ExchangeFeaturesState };
+        if (!res.ok) return false;
+        if (data.features) setExchangeFeatures(data.features);
+        pushToast({
+          title: 'Card Preferences Saved',
+          detail: cfg.cashbackAsset
+            ? `Rewards payout switched to ${cfg.cashbackAsset}.`
+            : 'Updated daily card limit.',
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const spendWithCard = useCallback(
+    async (merchant: string, category: string, amountUsd: number): Promise<boolean> => {
+      try {
+        const res = await authFetch('/api/v1/card/spend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ merchant, category, amountUsd }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          features?: ExchangeFeaturesState;
+          cashBalance?: number;
+          error?: string;
+        };
+        if (data.features) setExchangeFeatures(data.features);
+        if (!res.ok) {
+          pushToast({
+            title: 'Card Authorization Declined',
+            detail: data.error ?? 'Transaction rejected.',
+            tone: 'negative',
+          });
+          return false;
+        }
+        if (typeof data.cashBalance === 'number') setCashBalance(data.cashBalance);
+        pushToast({
+          title: `Paid $${amountUsd.toFixed(2)} at ${merchant}`,
+          detail: 'Cashback credited directly to your active balance.',
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
   return {
     connected,
     reconnecting,
@@ -3483,5 +3759,15 @@ export function useMarketSocket() {
     submitBugBounty,
     runAutomatedPentest,
     downloadSanitizedPolicyBundle,
+    exchangeFeatures,
+    fetchExchangeFeatures,
+    fetchServerPortfolioAnalytics,
+    stakeAsset,
+    unstakeAsset,
+    placePrediction,
+    settlePrediction,
+    toggleCardFreeze,
+    updateCardConfig,
+    spendWithCard,
   };
 }

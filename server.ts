@@ -70,6 +70,7 @@ import {
   findPasskeysForAuthLookup,
   flushWorkspacesImmediate,
   getActiveCashBalance,
+  setActiveCashBalance,
   getAuthStats,
   getOrCreateWorkspace,
   getPromoProfile,
@@ -96,6 +97,17 @@ import {
   verifySessionToken,
   type UserWorkspaceState,
 } from './server/authEngine.ts';
+import { computePortfolioAnalyticsReport } from './src/utils/quantPortfolioEngine.ts';
+import {
+  executeCardSpend,
+  getExchangeFeaturesState,
+  placePredictionBet,
+  settlePredictionBet,
+  stakeIntoPool,
+  toggleCardFreeze,
+  unstakePosition,
+  updateCardConfig,
+} from './server/exchangeFeatures.ts';
 import {
   initializeAgentPerformanceTracker,
   tickAgentPerformance,
@@ -510,11 +522,18 @@ let actionableInsights: ActionableInsight[] = [];
 
 // Shared API License Keys, Audit, Security Firewall State
 // (Per-user cashBalance, orders, positions, alerts, and encrypted bank vaults live in authEngine UserWorkspaceState)
+const initialInstToken =
+  process.env.AUREX_INSTITUTIONAL_API_KEY?.trim() ||
+  `ephem_${crypto.randomBytes(8).toString('hex')}`;
+const initialProToken =
+  process.env.AUREX_PRO_API_KEY?.trim() ||
+  `ephem_${crypto.randomBytes(8).toString('hex')}`;
+
 const apiKeysList: ApiLicenseKey[] = [
   {
     id: 'key-inst-1',
     label: 'Primary Quant Execution Engine',
-    keyPreview: 'aurx_live_89f4...c10a',
+    keyPreview: `****${initialInstToken.slice(-4)}`,
     tier: 'Institutional',
     rateLimitPerMin: 12000,
     callsToday: 42819,
@@ -523,7 +542,7 @@ const apiKeysList: ApiLicenseKey[] = [
   {
     id: 'key-pro-2',
     label: 'Research & Backtest Pipeline',
-    keyPreview: 'aurx_live_31a2...9e4b',
+    keyPreview: `****${initialProToken.slice(-4)}`,
     tier: 'Pro',
     rateLimitPerMin: 2400,
     callsToday: 8914,
@@ -531,8 +550,8 @@ const apiKeysList: ApiLicenseKey[] = [
   },
 ];
 const rawKeyLookup = new Map<string, ApiLicenseKey>([
-  ['aurx_live_89f4_demo_c10a', apiKeysList[0]],
-  ['aurx_live_31a2_demo_9e4b', apiKeysList[1]],
+  [initialInstToken, apiKeysList[0]],
+  [initialProToken, apiKeysList[1]],
 ]);
 
 const auditLogsList: AuditLogEntry[] = [];
@@ -1483,8 +1502,8 @@ app.post('/api/v1/keys', (req, res) => {
   const tier: ApiLicenseKey['tier'] =
     body.tier === 'Institutional' || body.tier === 'Pro' ? body.tier : 'Starter';
   const rateLimitPerMin = tier === 'Institutional' ? 12000 : tier === 'Pro' ? 2400 : 300;
-  const token = `aurx_live_${crypto.randomBytes(2).toString('hex')}_${crypto.randomBytes(4).toString('hex')}`;
-  const keyPreview = `${token.slice(0, 14)}...${token.slice(-4)}`;
+  const token = `${crypto.randomBytes(4).toString('hex')}-${crypto.randomBytes(8).toString('hex')}`;
+  const keyPreview = `****${token.slice(-4)}`;
 
   const created: ApiLicenseKey = {
     id: `key-${Date.now()}`,
@@ -3834,6 +3853,226 @@ app.get('/api/v1/system/export-policy-bundle', (_req, res) => {
   res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="SECURITY_AND_SYSTEM_POLICY.md"');
   res.send(markdown);
+});
+
+// ---------------------------------------------------------------------------
+// Quantitative Portfolio Analytics (Sharpe, Volatility, Covariance, VaR)
+// ---------------------------------------------------------------------------
+app.get('/api/v1/portfolio/analytics', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to inspect Portfolio Analytics.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const rfQuery = Number.parseFloat(String(req.query.rf ?? '4.25'));
+  const riskFreeRatePct = Number.isFinite(rfQuery) ? Math.max(0, Math.min(15, rfQuery)) : 4.25;
+  const activePositions = recomputePositions(wsState, wsState.accountMode);
+  const report = computePortfolioAnalyticsReport({
+    positions: activePositions,
+    instruments: Array.from(instrumentsMap.values()),
+    predictions: Object.fromEntries(predictionsMap.entries()),
+    cashBalance: getActiveCashBalance(wsState),
+    vaultBalanceUsd: wsState.vaultBalanceUsd,
+    accountMode: wsState.accountMode,
+    riskFreeRatePct,
+  });
+  res.json({ report });
+});
+
+// ---------------------------------------------------------------------------
+// Exchange Features: Staking Yield, 5m/15m/1h Predictions & Amber Metal Card
+// ---------------------------------------------------------------------------
+app.get('/api/v1/exchange/features', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required for exchange features.' });
+    return;
+  }
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.json({ features });
+});
+
+app.post('/api/v1/staking/stake', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to stake assets.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  if (wsState.lockdownMode) {
+    res.status(423).json({ error: 'Account Lockdown Active: Lift lockdown in Vault before staking.' });
+    return;
+  }
+  const body = req.body as { poolId?: string; amountUsd?: number };
+  const activeCash = getActiveCashBalance(wsState);
+  const result = stakeIntoPool(
+    session.user.id,
+    session.user.name,
+    String(body.poolId ?? ''),
+    Number(body.amountUsd ?? 0),
+    instrumentsMap,
+    activeCash
+  );
+  if (!result.ok || result.deductedUsd === undefined) {
+    res.status(400).json({ error: result.error ?? 'Unable to stake assets.' });
+    return;
+  }
+  setActiveCashBalance(wsState, Math.max(0, activeCash - result.deductedUsd));
+  persistWorkspacesSnapshot();
+  const deskPayload = buildDeskStatePayload(wsState);
+  perfEngine.sendToUser(session.user.id, { type: 'desk:state', payload: deskPayload });
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.status(201).json({ ok: true, features, cashBalance: deskPayload.cashBalance });
+});
+
+app.post('/api/v1/staking/unstake', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to redeem staked position.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const body = req.body as { positionId?: string };
+  const result = unstakePosition(
+    session.user.id,
+    session.user.name,
+    String(body.positionId ?? ''),
+    instrumentsMap
+  );
+  if (!result.ok || result.creditedUsd === undefined) {
+    res.status(400).json({ error: result.error ?? 'Unable to unstake position.' });
+    return;
+  }
+  const activeCash = getActiveCashBalance(wsState);
+  setActiveCashBalance(wsState, activeCash + result.creditedUsd);
+  persistWorkspacesSnapshot();
+  const deskPayload = buildDeskStatePayload(wsState);
+  perfEngine.sendToUser(session.user.id, { type: 'desk:state', payload: deskPayload });
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.json({ ok: true, creditedUsd: result.creditedUsd, features, cashBalance: deskPayload.cashBalance });
+});
+
+app.post('/api/v1/predictions/bet', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to open prediction contract.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  if (wsState.lockdownMode) {
+    res.status(423).json({ error: 'Account Lockdown Active: Lift lockdown in Vault before trading.' });
+    return;
+  }
+  const body = req.body as { contractId?: string; direction?: 'UP' | 'DOWN'; stakeUsd?: number };
+  const direction = body.direction === 'DOWN' ? 'DOWN' : 'UP';
+  const activeCash = getActiveCashBalance(wsState);
+  const result = placePredictionBet(
+    session.user.id,
+    session.user.name,
+    String(body.contractId ?? ''),
+    direction,
+    Number(body.stakeUsd ?? 0),
+    instrumentsMap,
+    activeCash
+  );
+  if (!result.ok || result.deductedUsd === undefined) {
+    res.status(400).json({ error: result.error ?? 'Unable to place prediction.' });
+    return;
+  }
+  setActiveCashBalance(wsState, Math.max(0, activeCash - result.deductedUsd));
+  persistWorkspacesSnapshot();
+  const deskPayload = buildDeskStatePayload(wsState);
+  perfEngine.sendToUser(session.user.id, { type: 'desk:state', payload: deskPayload });
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.status(201).json({ ok: true, bet: result.bet, features, cashBalance: deskPayload.cashBalance });
+});
+
+app.post('/api/v1/predictions/close', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to settle prediction.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  const body = req.body as { betId?: string };
+  const result = settlePredictionBet(
+    session.user.id,
+    session.user.name,
+    String(body.betId ?? ''),
+    instrumentsMap
+  );
+  if (!result.ok || result.creditedUsd === undefined) {
+    res.status(400).json({ error: result.error ?? 'Unable to settle prediction.' });
+    return;
+  }
+  const activeCash = getActiveCashBalance(wsState);
+  setActiveCashBalance(wsState, activeCash + result.creditedUsd);
+  persistWorkspacesSnapshot();
+  const deskPayload = buildDeskStatePayload(wsState);
+  perfEngine.sendToUser(session.user.id, { type: 'desk:state', payload: deskPayload });
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.json({ ok: true, bet: result.bet, creditedUsd: result.creditedUsd, features, cashBalance: deskPayload.cashBalance });
+});
+
+app.post('/api/v1/card/toggle-freeze', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to control card security.' });
+    return;
+  }
+  const body = req.body as { frozen?: boolean };
+  toggleCardFreeze(session.user.id, session.user.name, Boolean(body.frozen), instrumentsMap);
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.json({ ok: true, features });
+});
+
+app.post('/api/v1/card/config', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to update card settings.' });
+    return;
+  }
+  const body = req.body as { cashbackAsset?: 'BTC' | 'SOL' | 'USDT'; dailyLimitUsd?: number };
+  updateCardConfig(session.user.id, session.user.name, body, instrumentsMap);
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.json({ ok: true, features });
+});
+
+app.post('/api/v1/card/spend', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required for card transactions.' });
+    return;
+  }
+  const wsState = getOrCreateWorkspace(session.user.id, (s) => instrumentsMap.get(s)?.price ?? 100);
+  if (wsState.lockdownMode) {
+    res.status(423).json({ error: 'Account Lockdown Active: Card rails suspended.' });
+    return;
+  }
+  const body = req.body as { merchant?: string; category?: string; amountUsd?: number };
+  const activeCash = getActiveCashBalance(wsState);
+  const result = executeCardSpend(
+    session.user.id,
+    session.user.name,
+    sanitizePlainText(body.merchant ?? 'Global Merchant', 48),
+    sanitizePlainText(body.category ?? 'Commerce', 24),
+    Number(body.amountUsd ?? 0),
+    activeCash,
+    instrumentsMap
+  );
+  if (!result.ok || result.netDebitUsd === undefined) {
+    const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+    res.status(400).json({ error: result.error ?? 'Card spend declined.', features });
+    return;
+  }
+  const cashbackCredit = result.cardProfile.transactions[0]?.cashbackUsd ?? 0;
+  setActiveCashBalance(wsState, Math.max(0, activeCash - result.netDebitUsd + cashbackCredit));
+  persistWorkspacesSnapshot();
+  const deskPayload = buildDeskStatePayload(wsState);
+  perfEngine.sendToUser(session.user.id, { type: 'desk:state', payload: deskPayload });
+  const features = getExchangeFeaturesState(session.user.id, session.user.name, instrumentsMap);
+  res.status(201).json({ ok: true, features, cashBalance: deskPayload.cashBalance });
 });
 
 // ---------------------------------------------------------------------------
