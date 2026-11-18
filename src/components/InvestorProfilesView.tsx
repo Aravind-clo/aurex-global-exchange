@@ -75,7 +75,7 @@ export function InvestorProfilesView({
   onOpenTerminal,
 }: InvestorProfilesViewProps) {
   const [subTab, setSubTab] = useState<'directory' | 'rewards' | 'kyc' | 'scam'>('directory');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | 'famous' | 'community' | 'following'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'famous' | 'organization' | 'community' | 'following'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [claimingId, setClaimingId] = useState<string | null>(null);
 
@@ -135,6 +135,7 @@ export function InvestorProfilesView({
   }, [categoryFilter, followingSet, profiles, searchQuery]);
 
   const famousCount = profiles.filter((p) => p.category === 'famous').length;
+  const organizationCount = profiles.filter((p) => p.category === 'organization').length;
   const communityCount = profiles.filter((p) => p.category === 'community').length;
   const followingCount = profiles.filter((p) => p.following || followingSet.has(p.id)).length;
 
@@ -278,8 +279,9 @@ export function InvestorProfilesView({
               {(
                 [
                   { id: 'all', label: `All Profiles (${profiles.length})` },
-                  { id: 'famous', label: `Famous Public Investors (${famousCount})` },
-                  { id: 'community', label: `Everyday Verified Investors (${communityCount})` },
+                  { id: 'famous', label: `Famous Traders (${famousCount})` },
+                  { id: 'organization', label: `Organizations (${organizationCount})` },
+                  { id: 'community', label: `Community Traders (${communityCount})` },
                   { id: 'following', label: `Following (${followingCount})` },
                 ] as const
               ).map((tab) => (
@@ -439,7 +441,12 @@ export function InvestorProfilesView({
                   </div>
 
                   <div className="text-[11px] font-mono text-[#B45309] dark:text-[#F0B90B]">
-                    {prof.category === 'famous' ? 'Public Archive' : 'Verified Investor'} · {prof.verificationBadge}
+                    {prof.category === 'organization'
+                      ? 'Verified Institution'
+                      : prof.category === 'famous'
+                      ? 'Public Filing Profile'
+                      : 'Verified Trader'}{' '}
+                    · {prof.verificationBadge}
                   </div>
 
                   <div className="text-xs font-medium text-slate-800 dark:text-[#EAECEF]">
@@ -464,7 +471,7 @@ export function InvestorProfilesView({
                       </div>
                     </div>
                     <div>
-                      <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Record</div>
+                      <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Scale</div>
                       <div className="font-sans text-[10px] text-slate-700 dark:text-[#B7BDC6] truncate">
                         {prof.aumOrCapitalLabel}
                       </div>
@@ -474,7 +481,7 @@ export function InvestorProfilesView({
 
                 <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-[#2B3139]">
                   <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="text-slate-500 dark:text-[#848E9C]">Watchlist:</span>
+                    <span className="text-slate-500 dark:text-[#848E9C]">Focus Markets:</span>
                     {prof.focusMarkets.map((sym) => (
                       <button
                         key={sym}
@@ -486,9 +493,6 @@ export function InvestorProfilesView({
                         <ArrowUpRight className="w-3 h-3" />
                       </button>
                     ))}
-                  </div>
-                  <div className="text-[10px] text-slate-500 dark:text-[#848E9C]">
-                    {prof.disclaimerNote}
                   </div>
                 </div>
               </div>
@@ -506,7 +510,7 @@ export function InvestorProfilesView({
                 <div className="flex items-center gap-2">
                   <Trophy className="w-4 h-4 text-[#F0B90B]" />
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-[#EAECEF]">
-                    Aurex Loyalty Tier &amp; Social Graph
+                    Nuvra Loyalty Tier &amp; Social Graph
                   </h3>
                 </div>
                 {onRefreshRewardsAndSocial && (

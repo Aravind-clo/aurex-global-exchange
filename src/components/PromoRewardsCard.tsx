@@ -25,10 +25,10 @@ export const PromoRewardsCard: React.FC<PromoRewardsCardProps> = ({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const shareOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aurex.exchange';
-  const refCode = profile?.referralCode ?? 'AURX-GLOBAL';
+  const shareOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://nuvra.exchange';
+  const refCode = profile?.referralCode ?? 'NUVRA-GLOBAL';
   const inviteLink = `${shareOrigin}/?ref=${encodeURIComponent(refCode)}`;
-  const shareText = `Trading global stocks, India NSE, crypto & forex with 24 live AI agents and Global UPI Corridors on Aurex Global Exchange. Use my referral code ${refCode} for bonus demo credits & fee discounts: ${inviteLink}`;
+  const shareText = `Trading global stocks, India NSE, crypto & forex with 24 live AI agents and Global UPI Corridors on Nuvra Exchange. Use my referral code ${refCode} for bonus demo credits & fee discounts: ${inviteLink}`;
 
   const encodedText = encodeURIComponent(shareText);
   const encodedUrl = encodeURIComponent(inviteLink);
@@ -71,7 +71,7 @@ export const PromoRewardsCard: React.FC<PromoRewardsCardProps> = ({
     if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
       try {
         await navigator.share({
-          title: 'Aurex Global Exchange',
+          title: 'Nuvra Exchange',
           text: shareText,
           url: inviteLink,
         });
@@ -197,7 +197,7 @@ export const PromoRewardsCard: React.FC<PromoRewardsCardProps> = ({
               type="text"
               value={promoInput}
               onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
-              placeholder="Enter WELCOME500 or friend's AURX-... code"
+              placeholder="Enter WELCOME500 or friend's NUVRA-... code"
               className="flex-1 px-2.5 py-1.5 rounded border border-slate-300 dark:border-[#2B3139] bg-white dark:bg-[#181A20] text-xs font-mono text-slate-900 dark:text-[#EAECEF] placeholder:text-slate-400"
             />
             <button

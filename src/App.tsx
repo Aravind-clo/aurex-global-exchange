@@ -5,6 +5,7 @@ import {
   Bell,
   Bot,
   CandlestickChart,
+  CheckCircle2,
   Clock,
   Cpu,
   CreditCard,
@@ -15,9 +16,12 @@ import {
   Keyboard,
   Lock,
   LogOut,
+  Mail,
   Menu,
   Moon,
+  Plus,
   Radio,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -38,8 +42,8 @@ import { OrderTicket } from './components/OrderTicket';
 import { OverviewSignalsView } from './components/OverviewSignalsView';
 import { PortfolioAnalyticsView } from './components/PortfolioAnalyticsView';
 import {
-  AurexCardView,
   ExchangeActivityView,
+  NuvraCardView,
   PredictMarketsView,
 } from './components/PredictCardActivityViews';
 import { ScreenerView } from './components/ScreenerView';
@@ -63,7 +67,7 @@ import {
   formatPrice,
   formatTimeShort,
 } from './utils/format';
-import type { ChartTimeframe, Position } from './types/market';
+import type { ChartTimeframe, PlatformNotification, Position } from './types/market';
 
 type WorkspaceView =
   | 'home'
@@ -85,7 +89,7 @@ type WorkspaceView =
   | 'admin';
 
 const FOUNDER_EMAIL = 'vemulavankeswararao@gmail.com';
-const WATCHLIST_STORAGE_KEY = 'aurex_watchlist_v1';
+const WATCHLIST_STORAGE_KEY = 'nuvra_watchlist_v1';
 
 const WATCHLIST_SYMBOLS = [
   'BTC-USD',
@@ -257,12 +261,46 @@ export default function App() {
     executeGuardedWithdrawal,
     runVibeAudit,
     runGeminiEnterpriseAnalysis,
+    notifications,
+    userLimits,
+    userGrants,
+    reaLedger,
+    topTierVerification,
+    coinLaunches,
+    chartAnalytics,
+    ipIntel,
+    marketSessions,
+    ipRules,
+    ipEvents,
+    pendingVerifications,
+    gmailStatus,
+    requestPasswordReset,
+    confirmPasswordReset,
+    fetchReaLedger,
+    submitProfileStep,
+    submitDocumentStep,
+    initiateBankMicroDepositStep,
+    verifyBankMicroDepositStep,
+    submitCoinLaunchProposal,
+    lookupIpIntel,
+    markNotificationRead,
+    connectAdminGmail,
+    disconnectAdminGmail,
+    dispatchAdminGmailAlert,
+    updateAdminUserLimits,
+    updateAdminUserGrants,
+    upsertAdminIpRule,
+    unblockAdminIpRule,
+    reviewAdminVerification,
+    reviewAdminCoinLaunch,
   } = useMarketSocket();
 
   const [view, setView] = useState<WorkspaceView>('home');
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(() => {
     try {
-      const saved = window.localStorage.getItem(WATCHLIST_STORAGE_KEY);
+      const saved =
+        window.localStorage.getItem(WATCHLIST_STORAGE_KEY) ??
+        window.localStorage.getItem('aurex_watchlist_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -294,6 +332,28 @@ export default function App() {
   const [mobileTerminalTab, setMobileTerminalTab] = useState<'ticket' | 'book'>('ticket');
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [notificationsDrawerOpen, setNotificationsDrawerOpen] = useState(false);
+  const [notifFilter, setNotifFilter] = useState<
+    'ALL' | 'UNREAD' | PlatformNotification['category']
+  >('ALL');
+  const [pendingGmailConfirm, setPendingGmailConfirm] = useState<PlatformNotification | null>(null);
+  const [gmailSending, setGmailSending] = useState(false);
+  const [custodyInitialTab, setCustodyInitialTab] = useState<
+    'deposit' | 'verification' | undefined
+  >(undefined);
+
+  const unreadNotificationsCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
+  const filteredNotifications = useMemo(() => {
+    return notifications.filter((n) => {
+      if (notifFilter === 'ALL') return true;
+      if (notifFilter === 'UNREAD') return !n.read;
+      return n.category === notifFilter;
+    });
+  }, [notifications, notifFilter]);
 
   const isFounderAdmin =
     Boolean(authUser?.isAdmin) &&
@@ -499,7 +559,7 @@ export default function App() {
     { id: 'terminal', label: 'Trade Terminal', icon: CandlestickChart },
     { id: 'analytics', label: 'Portfolio Analytics', icon: BarChart3 },
     { id: 'predict', label: 'Predict & Stake', icon: Sparkles },
-    { id: 'card', label: 'Aurex Card', icon: CreditCard },
+    { id: 'card', label: 'Nuvra Card', icon: CreditCard },
     { id: 'activity', label: 'Activity Ledger', icon: Clock },
     { id: 'agents', label: 'AI Agents', icon: Bot },
     { id: 'bots', label: 'Smart Bots', icon: Cpu },
@@ -548,6 +608,8 @@ export default function App() {
           onPasskeyLogin={loginWithPasskey}
           onStartOAuth={startOAuthLogin}
           onRegister={registerNewAccount}
+          onRequestPasswordReset={requestPasswordReset}
+          onConfirmPasswordReset={confirmPasswordReset}
         />
         {toasts.length > 0 && (
           <div className="fixed bottom-4 right-4 z-50 space-y-2 w-80 max-w-[calc(100vw-2rem)]">
@@ -610,7 +672,7 @@ export default function App() {
             type="button"
             onClick={() => setView('home')}
             className="text-left whitespace-nowrap shrink-0"
-            aria-label="Aurex Global Exchange Home"
+            aria-label="Nuvra Exchange Home"
           >
             <BrandMark size="sm" showWordmark />
           </button>
@@ -882,9 +944,26 @@ export default function App() {
               type="button"
               onClick={() => openAlertModal(activeSymbol)}
               aria-label="New price alert"
-              className="p-2 rounded-md border border-slate-200 dark:border-[#2B3139] text-slate-600 dark:text-[#B7BDC6] hover:bg-slate-100 dark:hover:bg-[#2B3139] shrink-0"
+              title="Set Price Alert"
+              className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-[#2B3139] text-slate-600 dark:text-[#B7BDC6] hover:bg-slate-100 dark:hover:bg-[#2B3139] whitespace-nowrap shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5 text-[#F0B90B]" />
+              <span>Alert</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setNotificationsDrawerOpen(true)}
+              aria-label="Open Platform Notifications Bar"
+              title="Notifications & Security Alerts"
+              className="relative p-2 rounded-md border border-slate-200 dark:border-[#2B3139] text-slate-600 dark:text-[#B7BDC6] hover:bg-slate-100 dark:hover:bg-[#2B3139] shrink-0"
             >
               <Bell className="w-3.5 h-3.5" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#F6465D] text-white text-[9px] font-mono font-bold flex items-center justify-center tabular-nums">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
             </button>
           </div>
         </header>
@@ -971,7 +1050,7 @@ export default function App() {
               )}
 
               {view === 'card' && (
-                <AurexCardView
+                <NuvraCardView
                   cashBalance={cashBalance}
                   exchangeFeatures={exchangeFeatures}
                   onToggleFreeze={toggleCardFreeze}
@@ -1228,6 +1307,87 @@ export default function App() {
                       )}
                     </div>
                   </div>
+
+                  {/* Backend Quantitative Chart Analytics Strip */}
+                  {chartAnalytics && chartAnalytics.symbol === activeSymbol && (
+                    <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg px-4 py-3 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-900 dark:text-[#EAECEF]">
+                          Backend Chart Analytics &amp; Microstructure ({chartAnalytics.symbol})
+                        </span>
+                        <span className="font-mono text-[11px] text-[#0ECB81]">
+                          Computed Server-Side · Book Imbalance{' '}
+                          {chartAnalytics.orderBookImbalancePct >= 0 ? '+' : ''}
+                          {chartAnalytics.orderBookImbalancePct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-9 gap-2.5 text-xs font-mono tabular-nums">
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">VWAP</div>
+                          <div className="font-semibold text-slate-900 dark:text-white">
+                            {formatPrice(chartAnalytics.vwap, activeSymbol)}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">ATR-14</div>
+                          <div className="font-semibold text-[#F0B90B]">
+                            {formatPrice(chartAnalytics.atr14, activeSymbol)}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">SMA20 / EMA50</div>
+                          <div className="font-semibold text-slate-900 dark:text-white truncate">
+                            {formatPrice(chartAnalytics.sma20, activeSymbol)} / {formatPrice(chartAnalytics.ema50, activeSymbol)}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">BB Width</div>
+                          <div className="font-semibold text-slate-900 dark:text-white">
+                            {chartAnalytics.bollingerWidthPct.toFixed(2)}%
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">MACD Hist</div>
+                          <div className={`font-semibold ${chartAnalytics.macdHistogram >= 0 ? 'text-[#0ECB81]' : 'text-[#F6465D]'}`}>
+                            {chartAnalytics.macdHistogram >= 0 ? '+' : ''}
+                            {chartAnalytics.macdHistogram.toFixed(3)}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">RSI-14</div>
+                          <div
+                            className={`font-semibold ${
+                              chartAnalytics.rsi14 >= 70
+                                ? 'text-[#F6465D]'
+                                : chartAnalytics.rsi14 <= 30
+                                ? 'text-[#0ECB81]'
+                                : 'text-slate-900 dark:text-white'
+                            }`}
+                          >
+                            {chartAnalytics.rsi14.toFixed(1)}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Realized Vol</div>
+                          <div className="font-semibold text-[#F0B90B]">
+                            {chartAnalytics.realizedVolAnnualPct.toFixed(1)}%
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Liquidity Ratio</div>
+                          <div className="font-semibold text-slate-900 dark:text-white">
+                            {chartAnalytics.liquidityRatio.toFixed(2)}x
+                          </div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139]">
+                          <div className="font-sans text-[10px] text-slate-500 dark:text-[#848E9C]">Sharpe Est</div>
+                          <div className={`font-semibold ${chartAnalytics.sharpeEstimate >= 0 ? 'text-[#0ECB81]' : 'text-[#F6465D]'}`}>
+                            {chartAnalytics.sharpeEstimate.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Terminal Bottom Blotter */}
                   <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg overflow-hidden">
@@ -1660,7 +1820,14 @@ export default function App() {
                   promoProfile={promoProfile}
                   bankDirectory={bankDirectory}
                   kycVerified={kycRecord?.status === 'VERIFIED'}
+                  userLimits={userLimits}
+                  userGrants={userGrants}
+                  topTierVerification={topTierVerification}
                   onOpenKyc={() => setView('profile')}
+                  onOpenVerification={() => {
+                    setCustodyInitialTab('verification');
+                    setView('custody');
+                  }}
                   guideMode={guideMode}
                   onSwitchAccountMode={switchAccountMode}
                   onTransferVaultShield={transferVaultShield}
@@ -1705,8 +1872,22 @@ export default function App() {
                   fxBundle={fxBundle}
                   gasEstimates={gasEstimates}
                   vibeAudit={vibeAudit}
+                  userLimits={userLimits}
+                  userGrants={userGrants}
+                  reaLedger={reaLedger}
+                  topTierVerification={topTierVerification}
+                  coinLaunches={coinLaunches}
+                  ipIntel={ipIntel}
+                  marketSessions={marketSessions}
+                  guideMode={guideMode}
+                  initialTab={custodyInitialTab}
+                  onToggleGuideMode={(next) => {
+                    setGuideMode(next);
+                    void updateUserPrefs({ experienceMode: next ? 'newbie' : 'pro' });
+                  }}
                   onRefreshPublicApis={refreshPublicApisHub}
                   onRefreshCustody={refreshCustodyWallet}
+                  onRefreshReaLedger={fetchReaLedger}
                   onQuoteFxSwap={quoteFxSwap}
                   onExecuteFxSwap={executeFxSwap}
                   onAddAllowlist={addAllowlistAddress}
@@ -1716,8 +1897,14 @@ export default function App() {
                   onExecuteWithdrawal={executeGuardedWithdrawal}
                   onLookupBin={lookupBin}
                   onCheckThreat={checkThreat}
+                  onLookupIpIntel={lookupIpIntel}
                   onRunVibeAudit={runVibeAudit}
                   onRunGeminiAnalysis={runGeminiEnterpriseAnalysis}
+                  onSubmitProfileStep={submitProfileStep}
+                  onSubmitDocumentStep={submitDocumentStep}
+                  onInitiateBankStep={initiateBankMicroDepositStep}
+                  onVerifyBankStep={verifyBankMicroDepositStep}
+                  onSubmitCoinLaunch={submitCoinLaunchProposal}
                 />
               )}
 
@@ -1739,6 +1926,12 @@ export default function App() {
                   adminRewards={adminRewards}
                   diagnosticsReport={diagnosticsReport}
                   defenseAgents={defenseAgents}
+                  ipRules={ipRules}
+                  ipEvents={ipEvents}
+                  pendingVerifications={pendingVerifications}
+                  coinLaunches={coinLaunches}
+                  notifications={notifications}
+                  gmailStatus={gmailStatus}
                   onRefresh={fetchAdminTelemetry}
                   onRevokeUserSessions={revokeAdminUserSessions}
                   onRunFounderAiReview={runFounderAiReview}
@@ -1747,6 +1940,15 @@ export default function App() {
                   onToggleRewardCampaign={toggleAdminRewardCampaign}
                   onGrantReward={grantAdminReward}
                   onSolveDiagnostics={solveDiagnosticIssue}
+                  onUpdateUserLimits={updateAdminUserLimits}
+                  onUpdateUserGrants={updateAdminUserGrants}
+                  onUpsertIpRule={upsertAdminIpRule}
+                  onUnblockIpRule={unblockAdminIpRule}
+                  onReviewVerification={reviewAdminVerification}
+                  onReviewCoinLaunch={reviewAdminCoinLaunch}
+                  onConnectGmail={connectAdminGmail}
+                  onDisconnectGmail={disconnectAdminGmail}
+                  onDispatchGmailAlert={dispatchAdminGmailAlert}
                 />
               )}
             </>
@@ -1757,7 +1959,7 @@ export default function App() {
         {/* Clean Footer with Legal Policies */}
         <footer className="hidden lg:flex px-6 py-3 border-t border-slate-200 dark:border-[#2B3139] bg-white dark:bg-[#181A20] items-center justify-between text-[11px] text-slate-500 dark:text-[#848E9C]">
           <span>
-            Aurex Global Exchange · Demo ($1M Virtual) &amp; Isolated Real Trading + 2FA Cold Vault Custody (Non-Advisory Tooling)
+            Nuvra Exchange · Demo ($1M Virtual) &amp; Isolated Real Trading + 2FA Cold Vault Custody (Non-Advisory Tooling)
           </span>
           <div className="flex items-center gap-4">
             <button
@@ -1953,6 +2155,207 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Notifications & Security Alerts Drawer */}
+      {notificationsDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-[1px]">
+          <div className="w-full max-w-md h-full bg-white dark:bg-[#090A0D] border-l border-slate-200 dark:border-[#24262C] flex flex-col shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-[#24262C] flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-[#F59E0B]" />
+                <div>
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Notifications &amp; Security Alerts ({unreadNotificationsCount} unread)
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-[#8B919E]">
+                    Real-time IP 429 breaches, verifications, coin launches &amp; account alerts
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotificationsDrawerOpen(false)}
+                aria-label="Close notifications"
+                className="p-1.5 rounded border border-slate-200 dark:border-[#24262C] text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {isFounderAdmin && (
+              <div className="px-5 py-2.5 border-b border-slate-200 dark:border-[#24262C] bg-slate-50/70 dark:bg-[#14161B] flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 truncate">
+                  <Mail className="w-3.5 h-3.5 text-[#0ECB81] shrink-0" />
+                  <span className="text-slate-700 dark:text-[#D1D5DB] truncate">
+                    {gmailStatus.connected
+                      ? `Gmail Alerts: ${gmailStatus.email ?? FOUNDER_EMAIL}`
+                      : 'Gmail Admin Channel Disconnected'}
+                  </span>
+                </div>
+                {gmailStatus.connected ? (
+                  <button
+                    type="button"
+                    onClick={disconnectAdminGmail}
+                    className="px-2.5 py-1 rounded border border-[#24262C] text-[11px] text-[#F6465D] hover:bg-[#1D2028] whitespace-nowrap shrink-0"
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void connectAdminGmail()}
+                    className="px-2.5 py-1 rounded bg-[#F59E0B] text-[#090A0C] text-[11px] font-semibold whitespace-nowrap shrink-0"
+                  >
+                    Connect Gmail
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-[#24262C] flex flex-wrap gap-1.5 text-[11px] shrink-0">
+              {(
+                [
+                  { id: 'ALL', label: 'All' },
+                  { id: 'UNREAD', label: 'Unread' },
+                  { id: 'SECURITY_429', label: 'IP 429' },
+                  { id: 'VERIFICATION', label: 'KYC' },
+                  { id: 'COIN_LAUNCH', label: 'Launchpad' },
+                  { id: 'LIMIT_BREACH', label: 'Limits' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setNotifFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap ${
+                    notifFilter === tab.id
+                      ? 'bg-[#F59E0B] text-[#090A0C]'
+                      : 'bg-slate-100 dark:bg-[#14161B] text-slate-600 dark:text-[#8B919E]'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {filteredNotifications.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-500 dark:text-[#8B919E]">
+                  No notifications in this filter.
+                </div>
+              ) : (
+                filteredNotifications.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`p-3.5 rounded-xl border space-y-1.5 text-xs ${
+                      item.read
+                        ? 'bg-slate-50/70 dark:bg-[#121419] border-slate-200 dark:border-[#24262C]'
+                        : 'bg-white dark:bg-[#161922] border-[#F59E0B]/50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
+                        {item.severity === 'CRITICAL' ? (
+                          <ShieldAlert className="w-3.5 h-3.5 text-[#F6465D] shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#0ECB81] shrink-0" />
+                        )}
+                        <span>{item.title}</span>
+                      </div>
+                      <span className="font-mono text-[10px] text-slate-500 dark:text-[#8B919E] shrink-0">
+                        {item.category}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-[#B7BDC6] leading-relaxed">
+                      {item.message}
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[10px] font-mono">
+                      <span className="text-slate-500 dark:text-[#8B919E]">
+                        {formatTimeShort(item.createdAt)}
+                        {item.gmailDispatched ? ' · Gmail Sent' : ''}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {!item.read && (
+                          <button
+                            type="button"
+                            onClick={() => void markNotificationRead(item.id)}
+                            className="text-[#0ECB81] hover:underline"
+                          >
+                            Mark Read
+                          </button>
+                        )}
+                        {isFounderAdmin && !item.gmailDispatched && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingGmailConfirm(item)}
+                            className="text-[#F59E0B] hover:underline"
+                          >
+                            Send via Gmail
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Explicit Admin Gmail Dispatch Confirmation Modal */}
+      {pendingGmailConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+          <div className="w-full max-w-md bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-xl p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                <Mail className="w-4 h-4 text-[#F59E0B]" />
+                Confirm Admin Gmail Alert Dispatch
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPendingGmailConfirm(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B0E11] border border-slate-200 dark:border-[#2B3139] space-y-1">
+              <div className="font-semibold text-slate-900 dark:text-white">
+                To: {FOUNDER_EMAIL}
+              </div>
+              <div className="font-mono text-[11px] text-[#F59E0B]">
+                [Nuvra {pendingGmailConfirm.severity}] {pendingGmailConfirm.title}
+              </div>
+              <div className="text-[11px] text-slate-600 dark:text-[#B7BDC6]">
+                {pendingGmailConfirm.message}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingGmailConfirm(null)}
+                className="px-3.5 py-2 rounded-lg border border-slate-200 dark:border-[#2B3139] text-slate-700 dark:text-[#B7BDC6]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={gmailSending}
+                onClick={async () => {
+                  setGmailSending(true);
+                  await dispatchAdminGmailAlert(pendingGmailConfirm, FOUNDER_EMAIL);
+                  setGmailSending(false);
+                  setPendingGmailConfirm(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] font-semibold"
+              >
+                {gmailSending ? 'Sending…' : 'Confirm & Send Gmail'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

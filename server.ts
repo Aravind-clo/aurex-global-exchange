@@ -53,7 +53,11 @@ import {
   startCoinbaseWebSocket,
 } from './server/feeds.ts';
 import { createCcxtExchangeAdapters } from './connectors/index.ts';
-import { GLOBAL_MARKET_CATALOG, type SeedAsset } from './server/marketCatalog.ts';
+import {
+  GLOBAL_MARKET_CATALOG,
+  registerLaunchedSeedAsset,
+  type SeedAsset,
+} from './server/marketCatalog.ts';
 import { evaluateNexus24Agents } from './server/nexusAgents.ts';
 import fs from 'node:fs';
 import {
@@ -61,6 +65,7 @@ import {
   SESSION_COOKIE_NAME,
   authenticateAccount,
   completePasskeySignIn,
+  confirmPasswordReset,
   confirmTotpEnrollment,
   disableTotpForUser,
   extractSessionFromHeaders,
@@ -85,6 +90,7 @@ import {
   registerAccount,
   registerPasskeyForUser,
   removePasskeyForUser,
+  requestPasswordReset,
   revokeAllSessionsForUser,
   revokeOtherUserSessions,
   revokeSession,
@@ -115,7 +121,6 @@ import {
 } from './server/agentPerformanceTracker.ts';
 import { buildGlobalMonitorSnapshot } from './server/globalMonitorEngine.ts';
 import {
-  STORE_FILE_PATH,
   getAuthTelemetrySummary,
   getSafeServerKeyStatus,
   listAuthTelemetryEvents,
@@ -184,9 +189,41 @@ import {
   checkThreatReputation,
   fetchCoinGeckoLiveMarkets,
   fetchFrankfurterFxRates,
+  fetchIpIntel,
+  fetchMarketSessionsDirectory,
   fetchOnChainGasEstimates,
   lookupCardBin,
 } from './server/publicApisHub.ts';
+import {
+  checkOrderAgainstLimits,
+  checkWithdrawalAgainstLimits,
+  computeBackendChartAnalytics,
+  getReaLedgerSnapshot,
+  getTopTierVerification,
+  getUserFeatureGrants,
+  getUserLimits,
+  initiateBankMicroDeposit,
+  listCoinLaunches,
+  listIpRateEvents,
+  listIpRateRules,
+  listNotificationsForViewer,
+  listVerificationsForAdmin,
+  markNotificationGmailDispatched,
+  markNotificationRead,
+  recordReaEvent,
+  reviewCoinLaunch,
+  reviewTopTierVerification,
+  setNotificationBroadcastListener,
+  submitCoinLaunch,
+  submitDocumentVerification,
+  submitProfileVerification,
+  unblockIpRule,
+  updateUserFeatureGrants,
+  updateUserLimits,
+  upsertIpRateRule,
+  verifyBankMicroDeposit,
+} from './server/governanceAndReaEngine.ts';
+import type { CoinLaunchSubmission, KycDocumentType } from './src/types/market.ts';
 import {
   addAllowlistAddress,
   executeFxSwap,
@@ -608,8 +645,8 @@ function pushFirewallIncident(inc: FirewallIncident) {
 }
 
 function recordDeviceFromReq(userId: string, req: express.Request) {
-  const fp = req.header('x-aurex-device-fp');
-  const label = req.header('x-aurex-device-label');
+  const fp = req.header('x-nuvra-device-fp') ?? req.header('x-aurex-device-fp');
+  const label = req.header('x-nuvra-device-label') ?? req.header('x-aurex-device-label');
   if (fp) {
     recordObservedDevice(userId, fp, label, maskClientIp(req));
   }
@@ -816,8 +853,86 @@ for (const seed of SEED_ASSETS) {
   recentPatterns = [...pats, ...recentPatterns].slice(0, 40);
 }
 
+function activateLaunchedCoinMarket(sub: CoinLaunchSubmission) {
+  const symbol = sub.symbol.includes('-') ? sub.symbol.toUpperCase() : `${sub.symbol.toUpperCase()}-USD`;
+  if (instrumentsMap.has(symbol)) return instrumentsMap.get(symbol)!;
+
+  const ticker = symbol.replace(/-USD$/, '');
+  const seed: SeedAsset = {
+    symbol,
+    yahooSymbol: symbol,
+    name: `${sub.name} / USD`,
+    assetClass: 'crypto',
+    venue: 'Coinbase',
+    region: 'crypto',
+    sector: 'Verified Launchpad',
+    quoteCurrency: 'USD',
+    basePrice: Math.max(0.0001, sub.initialPriceUsd),
+    volatility: 0.0038,
+    baseVolume: Math.max(250_000, Math.round(sub.totalSupply * 0.015)),
+    cryptoTicker: ticker,
+  };
+
+  registerLaunchedSeedAsset(seed);
+  const candles = generateInitialCandles(seed, 90);
+  candlesMap.set(symbol, candles);
+  const price = candles[candles.length - 1].close;
+  const open24h = candles[0].open;
+  const high24h = Math.max(...candles.map((c) => c.high));
+  const low24h = Math.min(...candles.map((c) => c.low));
+  const book = buildOrderBook(symbol, price, 'crypto');
+  orderBooksMap.set(symbol, book);
+
+  const inst: Instrument = {
+    symbol,
+    name: seed.name,
+    assetClass: 'crypto',
+    instrumentType: 'spot',
+    venue: 'Coinbase',
+    region: 'crypto',
+    sector: seed.sector,
+    quoteCurrency: 'USD',
+    price,
+    open24h,
+    high24h,
+    low24h,
+    volume24h: seed.baseVolume,
+    bid: book.bids[0]?.price ?? price,
+    ask: book.asks[0]?.price ?? price,
+    spreadBps: Number(((book.spread / Math.max(price, 1e-8)) * 10000).toFixed(2)),
+    changePct: Number((((price - open24h) / Math.max(open24h, 1e-8)) * 100).toFixed(2)),
+    sparkline: candles.slice(-24).map((c) => c.close),
+    feedStatus: 'Live Feed',
+    updatedAt: Date.now(),
+    genesis: buildGenesisProfile(seed, price),
+  };
+  instrumentsMap.set(symbol, inst);
+
+  const trades: TradeTapeItem[] = [];
+  for (let i = 0; i < 12; i++) {
+    trades.push({
+      id: `trd-${symbol}-${i}`,
+      symbol,
+      price: roundPrice(symbol, price * (1 + (Math.random() - 0.5) * 0.0008)),
+      size: Number((Math.random() * 140 + 5).toFixed(3)),
+      side: Math.random() > 0.45 ? 'buy' : 'sell',
+      time: Date.now() - i * 4000,
+      venue: 'NUVRA',
+    });
+  }
+  tradesMap.set(symbol, trades);
+  predictionsMap.set(symbol, runShortTermMlPrediction(inst, candles, newsFeed, book));
+  perfEngine.setCatalogCounts(instrumentsMap.size, listAuthTelemetryEvents(500).length);
+  return inst;
+}
+
 // Seed multi-user accounts and isolated trading/banking workspaces
 seedInitialUsers((sym) => instrumentsMap.get(sym)?.price ?? 100);
+for (const launched of listCoinLaunches('founder', true)) {
+  if (launched.status === 'APPROVED_LISTED') {
+    activateLaunchedCoinMarket(launched);
+  }
+}
 perfEngine.setCatalogCounts(instrumentsMap.size, listAuthTelemetryEvents(500).length);
 
 function recomputePositions(wsState: UserWorkspaceState, mode: 'demo' | 'real' = wsState.accountMode): Position[] {
@@ -905,6 +1020,22 @@ setAuthEventListener((ev) => {
   for (const client of clients.values()) {
     if (client.isAdmin && isFounderEmail(client.email)) {
       sendToClient(client.ws, { type: 'admin:auth_event', payload: ev });
+    }
+  }
+});
+
+setNotificationBroadcastListener((notif) => {
+  for (const client of clients.values()) {
+    if (!client.userId) continue;
+    const isAdmin = Boolean(client.isAdmin && isFounderEmail(client.email));
+    if (
+      (notif.recipientScope === 'ADMIN' && isAdmin) ||
+      (notif.recipientScope === 'USER' && notif.recipientUserId === client.userId)
+    ) {
+      sendToClient(client.ws, {
+        type: 'notifications:update',
+        payload: listNotificationsForViewer(client.userId, isAdmin),
+      });
     }
   }
 });
@@ -1017,6 +1148,19 @@ function executeOrderFill(
   order.updatedAt = Date.now();
   perfEngine.recordOrderMatch();
   trackUserQuestProgress(wsState.userId, 'quest-trade', 1);
+  recordReaEvent({
+    eventType: 'TRADE_FILL',
+    resourceSymbol: order.symbol,
+    resourceType: instrumentsMap.get(order.symbol)?.assetClass === 'crypto' ? 'CRYPTO' : 'EQUITY',
+    referenceUsdPrice: fillPrice,
+    giveAgentId: order.side === 'buy' ? `agt-user-${wsState.userId.slice(0, 8)}` : 'agt-house-desk',
+    giveAgentLabel: order.side === 'buy' ? order.traderName : 'Nuvra Liquidity Desk',
+    takeAgentId: order.side === 'buy' ? 'agt-house-desk' : `agt-user-${wsState.userId.slice(0, 8)}`,
+    takeAgentLabel: order.side === 'buy' ? 'Nuvra Liquidity Desk' : order.traderName,
+    quantity: order.size,
+    usdNotional: notional,
+    referenceId: `${mode}:${order.id}`,
+  });
   persistWorkspacesSnapshot();
 }
 
@@ -1191,7 +1335,7 @@ const ccxtAdapters = createCcxtExchangeAdapters({
 async function refreshExternalSnapshots() {
   const equityAndFx = SEED_ASSETS.filter((a) => a.assetClass !== 'crypto').map((a) => ({
     symbol: a.symbol,
-    yahooSymbol: a.yahooSymbol,
+    yahooSymbol: a.yahooSymbol ?? a.symbol,
   }));
   const cryptoCoins = SEED_ASSETS.filter((a) => a.assetClass === 'crypto').map((a) => ({
     symbol: a.symbol,
@@ -1525,8 +1669,12 @@ app.get('/api/v1/keys', (req, res) => {
 
 app.post('/api/v1/keys', (req, res) => {
   const session = extractSessionFromReq(req);
-  if (!session || !isFounderEmail(session.user.email)) {
-    res.status(403).json({ error: 'Founder Admin privileges required to issue API keys.' });
+  const canCreate =
+    session &&
+    (isFounderEmail(session.user.email) ||
+      getUserFeatureGrants(session.user.id, session.user.email).canCreateApiKeys);
+  if (!session || !canCreate) {
+    res.status(403).json({ error: 'Admin permission grant required to create API keys.' });
     return;
   }
   const body = req.body as { label?: string; tier?: ApiLicenseKey['tier'] };
@@ -1986,6 +2134,18 @@ app.post('/api/v1/wallet/fx-swap/execute', async (req, res) => {
       feeUsd: swap.feeUsd,
       rateSource: swap.rateSource,
     }).catch(() => {});
+    recordReaEvent({
+      eventType: 'FX_SWAP',
+      resourceSymbol: swap.toCurrency,
+      resourceType: 'FIAT',
+      referenceUsdPrice: swap.rate,
+      giveAgentId: `agt-user-${session.user.id.slice(0, 8)}`,
+      giveAgentLabel: session.user.name,
+      takeAgentId: 'agt-clearing-rail',
+      quantity: swap.toAmount,
+      usdNotional: Number((swap.fromAmount * (swap.fromCurrency === 'USD' ? 1 : swap.rate)).toFixed(2)),
+      referenceId: swap.id,
+    });
     res.status(201).json({ swap, custody });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'FX swap failed.' });
@@ -2065,7 +2225,7 @@ app.patch('/api/v1/wallet/allowlist/:id', async (req, res) => {
   } catch (err) {
     const code = (err as Error & { code?: string }).code;
     if (code === 'FORBIDDEN_IDOR') {
-      logIdorAttempt(req, `PATCH allowlist/${req.params.id}`);
+      logIdorAttempt(req, 'allowlist.patch');
       res.status(403).json({ error: (err as Error).message, idorBlockedCount: getIdorBlockedCount() });
       return;
     }
@@ -2091,7 +2251,7 @@ app.delete('/api/v1/wallet/allowlist/:id', async (req, res) => {
   } catch (err) {
     const code = (err as Error & { code?: string }).code;
     if (code === 'FORBIDDEN_IDOR') {
-      logIdorAttempt(req, `DELETE allowlist/${req.params.id}`);
+      logIdorAttempt(req, 'allowlist.delete');
       res.status(403).json({ error: (err as Error).message, idorBlockedCount: getIdorBlockedCount() });
       return;
     }
@@ -2144,16 +2304,43 @@ app.post('/api/v1/wallet/withdraw', async (req, res) => {
     amountNative?: number;
   };
   try {
+    const chain = body.chain ?? 'ETH';
+    const amountNative = Number(body.amountNative ?? 0);
+    const chainTicker =
+      chain === 'BTC' ? 'BTC-USD' : chain === 'SOL' ? 'SOL-USD' : chain === 'ETH' || chain === 'ARB' || chain === 'BASE' ? 'ETH-USD' : 'MATIC-USD';
+    const estUsd = Number((amountNative * (instrumentsMap.get(chainTicker)?.price ?? 1)).toFixed(2));
+    const limitGate = checkWithdrawalAgainstLimits({
+      userId: session.user.id,
+      email: session.user.email,
+      amountUsd: estUsd,
+    });
+    if (!limitGate.allowed) {
+      res.status(403).json({ error: limitGate.reason });
+      return;
+    }
     const withdrawal = await executeGuardedWithdrawal(
       session.user.id,
       {
-        chain: body.chain ?? 'ETH',
+        chain,
         toAddress: body.toAddress ?? '',
-        amountNative: Number(body.amountNative ?? 0),
+        amountNative,
       },
       wsState.lockdownMode,
       (s) => instrumentsMap.get(s)?.price
     );
+    if (withdrawal.status === 'BROADCASTED') {
+      recordReaEvent({
+        eventType: 'WITHDRAWAL',
+        resourceSymbol: chain,
+        resourceType: 'CRYPTO',
+        giveAgentId: 'agt-clearing-rail',
+        takeAgentId: `agt-user-${session.user.id.slice(0, 8)}`,
+        takeAgentLabel: session.user.name,
+        quantity: amountNative,
+        usdNotional: withdrawal.amountUsd,
+        referenceId: withdrawal.id,
+      });
+    }
     const fx = await fetchFrankfurterFxRates('USD', (s) => instrumentsMap.get(s)?.price);
     const custody = getCustodySnapshot(
       session.user.id,
@@ -2509,7 +2696,7 @@ app.post('/api/v1/auth/passkeys/register/options', (req, res) => {
     challengeId,
     publicKey: {
       challenge,
-      rp: { name: 'Aurex Global Exchange', id: rpId },
+      rp: { name: 'Nuvra Global Exchange', id: rpId },
       user: {
         id: Buffer.from(session.user.id, 'utf8').toString('base64url'),
         name: session.user.email,
@@ -2895,7 +3082,8 @@ app.post('/api/v1/auth/real-money', (req, res) => {
   const enabled = Boolean((req.body as { enabled?: boolean })?.enabled);
   if (enabled) {
     const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
-    if (!verif.ok) {
+    const grants = getUserFeatureGrants(session.user.id, session.user.email);
+    if (!verif.ok && !grants.canTradeRealMoney) {
       res.status(403).json({ error: verif.reason, kycVerified: verif.kycVerified, paymentVerified: verif.paymentVerified });
       return;
     }
@@ -2972,7 +3160,6 @@ app.get('/api/v1/admin/overview', (req, res) => {
       dualMfaReadyUsers: users.filter((u) => u.totpEnabled && u.passkeysCount > 0).length,
       uptimeSec: Math.round(process.uptime()),
       storageBackend: 'Encrypted Persistent Server Store',
-      storageFile: path.relative(process.cwd(), STORE_FILE_PATH),
       keyStatus: getSafeServerKeyStatus(),
     },
     users,
@@ -3044,14 +3231,18 @@ app.get('/api/v1/admin/export/app-guide', (req, res) => {
     res.status(403).json({ error: 'Founder Admin privileges required to export server guide.' });
     return;
   }
-  const docPath = path.resolve(process.cwd(), 'APP_KEYS_AND_INFO.md');
-  if (!fs.existsSync(docPath)) {
-    res.status(404).json({ error: 'APP_KEYS_AND_INFO.md not found on server.' });
-    return;
-  }
+  const guide = [
+    '# Nuvra Exchange — Founder Operations & Architecture Summary',
+    '',
+    '- **Platform**: Nuvra Exchange (REA Hash-Chained Custody & Multi-Asset Engine)',
+    '- **Environment Variables**: All keys & secrets remain strictly server-side (`process.env`).',
+    '- **Governance**: User limits (`user_limits`) and 1-click grants (`user_feature_grants`) are isolated from wallet balances.',
+    '- **Edge Guard**: IP Rate Limiter (`429`) + Dual In-App / Confirmed Gmail Admin Alerts.',
+    '- **Security**: Parameterized Drizzle ORM queries, TLS/HMAC encrypted telemetry envelopes, zero-enumeration password reset.',
+  ].join('\n');
   res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="APP_KEYS_AND_INFO.md"');
-  res.send(fs.readFileSync(docPath, 'utf8'));
+  res.setHeader('Content-Disposition', 'attachment; filename="NUVRA_GOVERNANCE_GUIDE.md"');
+  res.send(guide);
 });
 
 // CCXT Multi-Exchange Live Connectors Status & Sync (Binance & KuCoin)
@@ -3137,7 +3328,7 @@ app.post('/api/v1/kyc/submit', (req, res) => {
   };
   const envelopeProof = verifyClientPacketEnvelope(
     'KYC_SUBMIT',
-    req.header('x-aurex-envelope'),
+    req.header('x-nuvra-envelope') ?? req.header('x-aurex-envelope'),
     body
   );
   if (!envelopeProof.ok) {
@@ -3429,7 +3620,8 @@ app.post('/api/v1/nexus/execute', (req, res) => {
   }
   if (wsState.accountMode === 'real') {
     const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
-    if (!verif.ok) {
+    const grants = getUserFeatureGrants(session.user.id, session.user.email);
+    if (!verif.ok && !grants.canTradeRealMoney) {
       res.status(403).json({ error: verif.reason });
       return;
     }
@@ -3463,6 +3655,16 @@ app.post('/api/v1/nexus/execute', (req, res) => {
   const side: 'buy' | 'sell' = report.finalDecision === 'BUY' ? 'buy' : 'sell';
   const size = Math.max(report.riskGate.recommendedSize, inst.price > 1000 ? 0.1 : 5);
   const execPrice = side === 'buy' ? inst.ask : inst.bid;
+  const limitGate = checkOrderAgainstLimits({
+    userId: session.user.id,
+    email: session.user.email,
+    orderNotionalUsd: size * execPrice,
+    openPositionsCount: recomputePositions(wsState).length,
+  });
+  if (!limitGate.allowed) {
+    res.status(403).json({ error: limitGate.reason });
+    return;
+  }
 
   const order: Order = {
     id: `ord-nx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -3648,7 +3850,8 @@ app.post('/api/v1/account/mode', (req, res) => {
   const requested = (req.body as { mode?: 'demo' | 'real' })?.mode === 'real' ? 'real' : 'demo';
   if (requested === 'real') {
     const verif = isUserVerifiedForRealTrading(session.user.id, wsState);
-    if (!verif.ok) {
+    const grants = getUserFeatureGrants(session.user.id, session.user.email);
+    if (!verif.ok && !grants.canTradeRealMoney) {
       res.status(403).json({
         error: verif.reason,
         kycVerified: verif.kycVerified,
@@ -3800,7 +4003,7 @@ app.post('/api/v1/vault/bank-accounts', (req, res) => {
 
   const envProof = verifyClientPacketEnvelope(
     'VAULT_BANK_LINK',
-    req.header('x-aurex-envelope'),
+    req.header('x-nuvra-envelope') ?? req.header('x-aurex-envelope'),
     body
   );
   if (!envProof.ok) {
@@ -3925,7 +4128,7 @@ app.post('/api/v1/vault/transfer', (req, res) => {
 
   const transferEnv = verifyClientPacketEnvelope(
     'VAULT_TRANSFER',
-    req.header('x-aurex-envelope'),
+    req.header('x-nuvra-envelope') ?? req.header('x-aurex-envelope'),
     body
   );
   if (!transferEnv.ok) {
@@ -3982,9 +4185,13 @@ app.post('/api/v1/vault/transfer', (req, res) => {
   }
 
   const amountUsd = convertNativeCurrencyToUsd(nativeAmount, currency);
-
-  if (amountUsd > 500_000) {
-    res.status(400).json({ error: 'Single transfer exceeds $500,000 velocity ceiling.' });
+  const transferLimit = checkWithdrawalAgainstLimits({
+    userId: session.user.id,
+    email: session.user.email,
+    amountUsd,
+  });
+  if (!transferLimit.allowed) {
+    res.status(403).json({ error: transferLimit.reason });
     return;
   }
 
@@ -4048,6 +4255,19 @@ app.post('/api/v1/vault/transfer', (req, res) => {
   if (wsState.vaultTransfers.length > 100) wsState.vaultTransfers.pop();
   persistWorkspacesSnapshot();
 
+  recordReaEvent({
+    eventType: type === 'deposit' ? 'DEPOSIT' : 'WITHDRAWAL',
+    resourceSymbol: currency,
+    resourceType: 'FIAT',
+    giveAgentId: type === 'deposit' ? `agt-user-${session.user.id.slice(0, 8)}` : 'agt-clearing-rail',
+    giveAgentLabel: type === 'deposit' ? session.user.name : 'Nuvra Multi-Rail Clearing',
+    takeAgentId: type === 'deposit' ? 'agt-clearing-rail' : `agt-user-${session.user.id.slice(0, 8)}`,
+    takeAgentLabel: type === 'deposit' ? 'Nuvra Multi-Rail Clearing' : session.user.name,
+    quantity: nativeAmount,
+    usdNotional: amountUsd,
+    referenceId: txId,
+  });
+
   const chainValid = verifyTransferChain(wsState.vaultTransfers);
   const deskPayload = buildDeskStatePayload(wsState);
 
@@ -4085,7 +4305,11 @@ app.get('/api/v1/network/telemetry', (_req, res) => {
 
 app.post('/api/v1/network/verify-envelope', (req, res) => {
   const channel = sanitizePlainText((req.body as { channel?: string })?.channel ?? 'CLIENT_PROBE', 40) || 'CLIENT_PROBE';
-  const proofRes = verifyClientPacketEnvelope(channel, req.header('x-aurex-envelope'), req.body);
+  const proofRes = verifyClientPacketEnvelope(
+    channel,
+    req.header('x-nuvra-envelope') ?? req.header('x-aurex-envelope'),
+    req.body
+  );
   if (!proofRes.ok) {
     res.status(403).json({ error: proofRes.reason });
     return;
@@ -4944,6 +5168,479 @@ app.post('/api/v1/social/contributors/:id/follow', (req, res) => {
   res.json({ contributor: ctr });
 });
 
+// ---------------------------------------------------------------------------
+// Forgot Password (Zero-Enumeration 3-Step Self-Service Recovery)
+// ---------------------------------------------------------------------------
+app.post('/api/v1/auth/forgot-password', (req, res) => {
+  const body = (req.body ?? {}) as { email?: string };
+  const result = requestPasswordReset(body.email ?? '', {
+    rawIp: extractRawClientIp(req),
+    userAgent: req.headers['user-agent'] ?? 'Browser Client',
+  });
+  res.json(result);
+});
+
+app.post('/api/v1/auth/reset-password', (req, res) => {
+  const body = (req.body ?? {}) as {
+    email?: string;
+    code?: string;
+    newPassword?: string;
+    totpCode?: string;
+  };
+  const result = confirmPasswordReset(
+    {
+      email: body.email ?? '',
+      code: body.code ?? '',
+      newPassword: body.newPassword ?? '',
+      totpCode: body.totpCode,
+    },
+    {
+      rawIp: extractRawClientIp(req),
+      userAgent: req.headers['user-agent'] ?? 'Browser Client',
+    }
+  );
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, revokedSessions: result.sessionsRevoked });
+});
+
+// ---------------------------------------------------------------------------
+// Separated User Limits, Feature Grants & IP-Based 429 Governance
+// ---------------------------------------------------------------------------
+app.get('/api/v1/limits/me', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to inspect limits.' });
+    return;
+  }
+  res.json({ limits: getUserLimits(session.user.id, session.user.email) });
+});
+
+app.get('/api/v1/grants/me', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to inspect feature grants.' });
+    return;
+  }
+  res.json({ grants: getUserFeatureGrants(session.user.id, session.user.email) });
+});
+
+app.patch('/api/v1/admin/limits/:userId', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const targetUser = listAdminUserDirectory((s) => instrumentsMap.get(s)?.price ?? 100).find(
+    (u) => u.id === req.params.userId
+  );
+  const body = (req.body ?? {}) as {
+    tierCode?: 'STARTER' | 'VERIFIED' | 'PRO' | 'INSTITUTIONAL';
+    dailyDepositLimitUsd?: number;
+    dailyWithdrawalLimitUsd?: number;
+    singleOrderMaxUsd?: number;
+    maxOpenPositions?: number;
+    maxLeverageX?: number;
+    apiCallsPerMin?: number;
+  };
+  const updated = updateUserLimits(
+    req.params.userId,
+    targetUser?.email ?? `${req.params.userId}@nuvra.exchange`,
+    body,
+    session.user.email
+  );
+  res.json({ limits: updated });
+});
+
+app.patch('/api/v1/admin/grants/:userId', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const targetUser = listAdminUserDirectory((s) => instrumentsMap.get(s)?.price ?? 100).find(
+    (u) => u.id === req.params.userId
+  );
+  const body = (req.body ?? {}) as {
+    canTradeRealMoney?: boolean;
+    canCreateApiKeys?: boolean;
+    canLaunchTokens?: boolean;
+    canBypassVelocity?: boolean;
+    canExportAudit?: boolean;
+  };
+  const updated = updateUserFeatureGrants(
+    req.params.userId,
+    targetUser?.email ?? `${req.params.userId}@nuvra.exchange`,
+    body,
+    session.user.email
+  );
+  res.json({ grants: updated });
+});
+
+app.get('/api/v1/admin/ip-rules', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  res.json({ rules: listIpRateRules(), events: listIpRateEvents(80) });
+});
+
+app.post('/api/v1/admin/ip-rules', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    id?: string;
+    ipPattern?: string;
+    maxRequestsPerMin?: number;
+    burstAllowance?: number;
+    status?: 'ACTIVE' | 'THROTTLED' | 'BLOCKED';
+    reason?: string;
+  };
+  const rule = upsertIpRateRule({
+    id: body.id,
+    ipPattern: body.ipPattern ?? extractRawClientIp(req),
+    maxRequestsPerMin: Number(body.maxRequestsPerMin ?? 60),
+    burstAllowance: body.burstAllowance !== undefined ? Number(body.burstAllowance) : 5,
+    status: body.status,
+    reason: body.reason,
+  });
+  res.status(201).json({ rule, rules: listIpRateRules(), events: listIpRateEvents(80) });
+});
+
+app.post('/api/v1/admin/ip-rules/:id/unblock', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const rule = unblockIpRule(req.params.id);
+  if (!rule) {
+    res.status(404).json({ error: 'IP rule not found' });
+    return;
+  }
+  res.json({ rule, rules: listIpRateRules(), events: listIpRateEvents(80) });
+});
+
+app.get('/api/v1/admin/ip-events', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  res.json({ events: listIpRateEvents(100) });
+});
+
+// ---------------------------------------------------------------------------
+// REA (Resources-Events-Agents) Cryptographic Double-Entry Ledger
+// ---------------------------------------------------------------------------
+app.get('/api/v1/rea/ledger', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to inspect REA ledger.' });
+    return;
+  }
+  res.json({ ledger: getReaLedgerSnapshot() });
+});
+
+// ---------------------------------------------------------------------------
+// Top-Tier 3-Stage Verification (Profile + Document + Bank Micro-Deposit)
+// ---------------------------------------------------------------------------
+app.get('/api/v1/verifications/me', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  res.json({ bundle: getTopTierVerification(session.user.id, session.user.email) });
+});
+
+app.post('/api/v1/verifications/profile', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const body = (req.body ?? {}) as { fullName?: string; country?: string };
+  const bundle = submitProfileVerification(session.user.id, session.user.email, {
+    fullName: sanitizePlainText(body.fullName, 80) || session.user.name,
+    country: sanitizePlainText(body.country, 60) || 'United States',
+  });
+  res.json({ bundle });
+});
+
+app.post('/api/v1/verifications/document', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    docType?: KycDocumentType;
+    docNumber?: string;
+    livenessSelfieConfirmed?: boolean;
+  };
+  const docType: KycDocumentType =
+    body.docType === 'Aadhaar' ||
+    body.docType === 'PAN' ||
+    body.docType === 'National ID' ||
+    body.docType === 'Drivers License'
+      ? body.docType
+      : 'Passport';
+  const result = submitDocumentVerification(session.user.id, session.user.email, {
+    docType,
+    docNumber: sanitizePlainText(body.docNumber, 40),
+    livenessSelfieConfirmed: Boolean(body.livenessSelfieConfirmed),
+  });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ bundle: result.bundle });
+});
+
+app.post('/api/v1/verifications/bank/initiate', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const body = (req.body ?? {}) as { bankName?: string; accountNumber?: string };
+  const result = initiateBankMicroDeposit(session.user.id, session.user.email, {
+    bankName: sanitizePlainText(body.bankName, 60),
+    accountNumber: sanitizePlainText(body.accountNumber, 40),
+  });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ bundle: result.bundle });
+});
+
+app.post('/api/v1/verifications/bank/verify', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const body = (req.body ?? {}) as { deposit1Cents?: number; deposit2Cents?: number };
+  const result = verifyBankMicroDeposit(session.user.id, session.user.email, {
+    deposit1Cents: Number(body.deposit1Cents ?? 0),
+    deposit2Cents: Number(body.deposit2Cents ?? 0),
+  });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, bundle: result.bundle });
+});
+
+app.get('/api/v1/admin/verifications/pending', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  res.json({ verifications: listVerificationsForAdmin() });
+});
+
+app.post('/api/v1/admin/verifications/:userId/review', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const body = (req.body ?? {}) as { decision?: 'APPROVE' | 'REJECT'; note?: string };
+  const decision = body.decision === 'REJECT' ? 'REJECT' : 'APPROVE';
+  const targetUser = listAdminUserDirectory((s) => instrumentsMap.get(s)?.price ?? 100).find(
+    (u) => u.id === req.params.userId
+  );
+  const bundle = reviewTopTierVerification(
+    req.params.userId,
+    targetUser?.email ?? `${req.params.userId}@nuvra.exchange`,
+    decision,
+    sanitizePlainText(body.note ?? '', 180),
+    session.user.email
+  );
+  res.json({ bundle, verifications: listVerificationsForAdmin() });
+});
+
+// ---------------------------------------------------------------------------
+// New Coin Registration & Verified Launchpad
+// ---------------------------------------------------------------------------
+app.get('/api/v1/launchpad/coins', (req, res) => {
+  const session = extractSessionFromReq(req);
+  const isAdmin = Boolean(session?.user.isAdmin && isFounderEmail(session.user.email));
+  res.json({ launches: listCoinLaunches(session?.user.id ?? 'anon', isAdmin) });
+});
+
+app.post('/api/v1/launchpad/submit', async (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to submit coin launch proposals.' });
+    return;
+  }
+  const grants = getUserFeatureGrants(session.user.id, session.user.email);
+  const verif = getTopTierVerification(session.user.id, session.user.email);
+  const isFounder = Boolean(session.user.isAdmin && isFounderEmail(session.user.email));
+  if (!isFounder && !grants.canLaunchTokens && verif.overallTier !== 'Tier 3 Full Bank & Custody') {
+    res.status(403).json({
+      error:
+        'Launchpad authorization required: complete Tier-3 verification or ask Founder Admin to toggle canLaunchTokens.',
+    });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    name?: string;
+    symbol?: string;
+    chain?: CoinLaunchSubmission['chain'];
+    contractAddress?: string;
+    initialPriceUsd?: number;
+    totalSupply?: number;
+    whitepaperSummary?: string;
+  };
+  const contractAddress = sanitizePlainText(body.contractAddress, 96);
+  const threatCheck = await checkThreatReputation(contractAddress);
+  const rawVerdict = String(threatCheck.verdict ?? 'CLEAN').toUpperCase();
+  const threatVerdict: CoinLaunchSubmission['threatVerdict'] =
+    rawVerdict === 'BLOCKED' || rawVerdict === 'MALICIOUS'
+      ? 'BLOCKED'
+      : rawVerdict === 'SUSPICIOUS' || rawVerdict === 'CAUTION'
+      ? 'SUSPICIOUS'
+      : 'CLEAN';
+  const validChains: CoinLaunchSubmission['chain'][] = ['ETH', 'SOL', 'BASE', 'ARB', 'MATIC', 'BTC'];
+  const chain: CoinLaunchSubmission['chain'] = validChains.includes(body.chain as CoinLaunchSubmission['chain'])
+    ? (body.chain as CoinLaunchSubmission['chain'])
+    : 'ETH';
+
+  const result = submitCoinLaunch({
+    ownerId: session.user.id,
+    ownerEmail: session.user.email,
+    name: sanitizePlainText(body.name, 64),
+    symbol: sanitizePlainText(body.symbol, 16),
+    chain,
+    contractAddress,
+    totalSupply: Number(body.totalSupply ?? 0),
+    initialPriceUsd: Number(body.initialPriceUsd ?? 0),
+    whitepaperSummary: sanitizePlainText(body.whitepaperSummary, 360),
+    existingSymbols: new Set(instrumentsMap.keys()),
+    threatVerdict,
+  });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({
+    submission: result.submission,
+    launches: listCoinLaunches(session.user.id, isFounder),
+  });
+});
+
+app.post('/api/v1/admin/launchpad/:id/review', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const body = (req.body ?? {}) as { decision?: 'APPROVE' | 'REJECT'; note?: string };
+  const decision = body.decision === 'REJECT' ? 'REJECT' : 'APPROVE';
+  let activatedInst: Instrument | undefined;
+  const result = reviewCoinLaunch(
+    req.params.id,
+    decision,
+    sanitizePlainText(body.note ?? '', 180),
+    session.user.email,
+    (sub) => {
+      activatedInst = activateLaunchedCoinMarket(sub);
+      broadcast({
+        type: 'market:batch',
+        payload: {
+          instruments: Array.from(instrumentsMap.values()),
+          predictions: Object.fromEntries(predictionsMap.entries()),
+          engineMetrics: perfEngine.getMetrics(false),
+          connectors: ccxtAdapters.getStatuses(),
+        },
+      });
+    }
+  );
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json({
+    submission: result.submission,
+    instrument: activatedInst,
+    launches: listCoinLaunches(session.user.id, true),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In-App Notifications & Admin Gmail Alert Status Tracking
+// ---------------------------------------------------------------------------
+app.get('/api/v1/notifications', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required to view notifications.' });
+    return;
+  }
+  const isAdmin = Boolean(session.user.isAdmin && isFounderEmail(session.user.email));
+  res.json({ notifications: listNotificationsForViewer(session.user.id, isAdmin) });
+});
+
+app.post('/api/v1/notifications/:id/read', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  const isAdmin = Boolean(session.user.isAdmin && isFounderEmail(session.user.email));
+  const item = markNotificationRead(req.params.id, session.user.id, isAdmin);
+  res.json({ item, notifications: listNotificationsForViewer(session.user.id, isAdmin) });
+});
+
+app.post('/api/v1/notifications/:id/gmail-dispatched', (req, res) => {
+  const session = extractSessionFromReq(req);
+  if (!session || !session.user.isAdmin || !isFounderEmail(session.user.email)) {
+    res.status(403).json({ error: `Founder-only access (${FOUNDER_EMAIL}).` });
+    return;
+  }
+  const item = markNotificationGmailDispatched(req.params.id);
+  res.json({ item, notifications: listNotificationsForViewer(session.user.id, true) });
+});
+
+// ---------------------------------------------------------------------------
+// Backend Quantitative Chart Analytics & Expanded Public-APIs Endpoints
+// ---------------------------------------------------------------------------
+app.get('/api/v1/markets/analytics/:symbol', (req, res) => {
+  const symbol = sanitizePlainText(req.params.symbol, 24).toUpperCase();
+  const timeframe = normalizeTimeframe(typeof req.query.timeframe === 'string' ? req.query.timeframe : undefined);
+  const inst = instrumentsMap.get(symbol);
+  if (!inst) {
+    res.status(404).json({ error: `Unknown symbol ${symbol}` });
+    return;
+  }
+  const candles = getCandlesForTimeframe(symbol, timeframe);
+  const book = orderBooksMap.get(symbol) ?? buildOrderBook(symbol, inst.price, inst.assetClass);
+  const analytics = computeBackendChartAnalytics(symbol, candles, book);
+  res.json({ analytics });
+});
+
+app.get('/api/v1/public-apis/ip-intel', async (req, res) => {
+  const queryIp = typeof req.query.ip === 'string' && req.query.ip.trim() ? req.query.ip.trim() : extractRawClientIp(req);
+  const intel = await fetchIpIntel(queryIp);
+  res.json({ intel });
+});
+
+app.get('/api/v1/public-apis/market-sessions', async (_req, res) => {
+  const sessions = await fetchMarketSessionsDirectory();
+  res.json({ sessions, updatedAt: Date.now() });
+});
+
 const server = http.createServer(app);
 server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
@@ -5081,6 +5778,9 @@ wss.on('connection', (ws, req) => {
         securityStatus,
         activeLockdowns: Array.from(listAllWorkspaces()).filter((w) => w.lockdownMode).length,
       }),
+      notifications: user
+        ? listNotificationsForViewer(user.id, Boolean(user.isAdmin && isFounderEmail(user.email)))
+        : [],
       promoProfile: user
         ? getPromoProfile(
             user.id,
@@ -5171,7 +5871,8 @@ wss.on('connection', (ws, req) => {
         }
         if (activeWorkspace.accountMode === 'real') {
           const verif = isUserVerifiedForRealTrading(client.userId, activeWorkspace);
-          if (!verif.ok) {
+          const grants = getUserFeatureGrants(client.userId, client.email ?? '');
+          if (!verif.ok && !grants.canTradeRealMoney) {
             sendToClient(ws, {
               type: 'error',
               payload: {
@@ -5193,6 +5894,20 @@ wss.on('connection', (ws, req) => {
         const execPrice = type === 'market' ? (side === 'buy' ? inst.ask : inst.bid) : Number(price ?? inst.price);
         if (!Number.isFinite(execPrice) || execPrice <= 0) {
           sendToClient(ws, { type: 'error', payload: { message: 'Invalid limit/stop price' } });
+          return;
+        }
+
+        const orderLimitGate = checkOrderAgainstLimits({
+          userId: client.userId,
+          email: client.email ?? '',
+          orderNotionalUsd: Number((size * execPrice).toFixed(2)),
+          openPositionsCount: recomputePositions(activeWorkspace).length,
+        });
+        if (!orderLimitGate.allowed) {
+          sendToClient(ws, {
+            type: 'error',
+            payload: { message: orderLimitGate.reason ?? 'Order blocked by user limit policy.' },
+          });
           return;
         }
 
@@ -5421,7 +6136,7 @@ async function bootstrap() {
   });
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Aurex Global Exchange engine listening on http://0.0.0.0:${PORT} (${instrumentsMap.size} global markets)`);
+    console.log(`Nuvra Global Exchange engine listening on http://0.0.0.0:${PORT} (${instrumentsMap.size} global markets)`);
   });
 
   const handleGracefulShutdown = () => {

@@ -34,7 +34,9 @@ export function getCachedDeviceFingerprint(): string {
   if (cachedFingerprint) return cachedFingerprint;
   if (typeof window === 'undefined') return 'srv-runtime';
   try {
-    const stored = window.sessionStorage.getItem('aurex_device_fp');
+    const stored =
+      window.sessionStorage.getItem('nuvra_device_fp') ??
+      window.sessionStorage.getItem('aurex_device_fp');
     if (stored) {
       cachedFingerprint = stored;
       return stored;
@@ -53,7 +55,7 @@ export function getCachedDeviceFingerprint(): string {
   ].join('|');
   cachedFingerprint = `fp-${fallbackHash(seed)}`;
   try {
-    window.sessionStorage.setItem('aurex_device_fp', cachedFingerprint);
+    window.sessionStorage.setItem('nuvra_device_fp', cachedFingerprint);
   } catch {
     // ignore
   }
@@ -85,7 +87,7 @@ export async function ensureCryptographicDeviceFingerprint(): Promise<string> {
         .slice(0, 20);
       cachedFingerprint = `fp-sha-${hex}`;
       try {
-        window.sessionStorage.setItem('aurex_device_fp', cachedFingerprint);
+        window.sessionStorage.setItem('nuvra_device_fp', cachedFingerprint);
       } catch {
         // ignore
       }

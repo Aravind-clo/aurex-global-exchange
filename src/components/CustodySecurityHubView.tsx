@@ -4,31 +4,47 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeftRight,
+  BadgeCheck,
   Bot,
   CheckCircle2,
+  Coins,
   Copy,
   CreditCard,
+  Database,
   Fuel,
+  Globe,
+  Landmark,
   Lock,
   Plus,
   QrCode,
   RefreshCw,
+  Rocket,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  UserCheck,
   XCircle,
 } from 'lucide-react';
 import type {
   BinLookupResult,
   ChainGasEstimate,
   CoinGeckoCoinTelemetry,
+  CoinLaunchSubmission,
   CustodyWalletSnapshot,
   CustodyWithdrawalRecord,
   FrankfurterFxBundle,
   FxSwapQuote,
   FxSwapRecord,
   GeminiEnterpriseAnalysisResult,
+  IpIntelLookupResult,
+  KycDocumentType,
+  MarketSessionCalendarItem,
+  ReaLedgerSnapshot,
   ThreatCheckResult,
+  TopTierVerificationBundle,
+  UserFeatureGrants,
+  UserLimitRecord,
   VibeSecurityAuditReport,
   VibeSecurityDomain,
   WalletVelocityPolicy,
@@ -36,7 +52,14 @@ import type {
 } from '../types/market';
 import { formatCompactNumber, formatCurrency, formatTimeShort } from '../utils/format';
 
-type CustodyHubTab = 'deposit' | 'fx-swap' | 'allowlist' | 'threat-bin' | 'auditor';
+type CustodyHubTab =
+  | 'deposit'
+  | 'verification'
+  | 'fx-swap'
+  | 'allowlist'
+  | 'rea-launchpad'
+  | 'threat-bin'
+  | 'auditor';
 
 interface CustodySecurityHubViewProps {
   custodyWallet: CustodyWalletSnapshot | null;
@@ -44,8 +67,19 @@ interface CustodySecurityHubViewProps {
   fxBundle: FrankfurterFxBundle | null;
   gasEstimates: ChainGasEstimate[];
   vibeAudit: VibeSecurityAuditReport | null;
+  userLimits?: UserLimitRecord | null;
+  userGrants?: UserFeatureGrants | null;
+  reaLedger?: ReaLedgerSnapshot | null;
+  topTierVerification?: TopTierVerificationBundle | null;
+  coinLaunches?: CoinLaunchSubmission[];
+  ipIntel?: IpIntelLookupResult | null;
+  marketSessions?: MarketSessionCalendarItem[];
+  guideMode?: boolean;
+  initialTab?: CustodyHubTab;
+  onToggleGuideMode?: (next: boolean) => void;
   onRefreshPublicApis: () => Promise<void>;
   onRefreshCustody: () => Promise<void>;
+  onRefreshReaLedger?: () => Promise<void>;
   onQuoteFxSwap: (
     fromCurrency: string,
     toCurrency: string,
@@ -71,11 +105,38 @@ interface CustodySecurityHubViewProps {
   ) => Promise<{ ok: boolean; withdrawal?: CustodyWithdrawalRecord; error?: string }>;
   onLookupBin: (bin: string) => Promise<BinLookupResult | null>;
   onCheckThreat: (target: string) => Promise<ThreatCheckResult | null>;
+  onLookupIpIntel?: (ip?: string) => Promise<IpIntelLookupResult | null>;
   onRunVibeAudit: () => Promise<VibeSecurityAuditReport | null>;
   onRunGeminiAnalysis: (
     mode: GeminiEnterpriseAnalysisResult['mode'],
     payload?: Record<string, unknown>
   ) => Promise<{ ok: boolean; analysis?: GeminiEnterpriseAnalysisResult; error?: string }>;
+  onSubmitProfileStep?: (payload: {
+    fullName: string;
+    country: string;
+  }) => Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }>;
+  onSubmitDocumentStep?: (payload: {
+    docType: KycDocumentType;
+    docNumber: string;
+    livenessSelfieConfirmed: boolean;
+  }) => Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }>;
+  onInitiateBankStep?: (payload: {
+    bankName: string;
+    accountNumber: string;
+  }) => Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }>;
+  onVerifyBankStep?: (payload: {
+    deposit1Cents: number;
+    deposit2Cents: number;
+  }) => Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }>;
+  onSubmitCoinLaunch?: (payload: {
+    name: string;
+    symbol: string;
+    chain: CoinLaunchSubmission['chain'];
+    contractAddress: string;
+    initialPriceUsd: number;
+    totalSupply: number;
+    whitepaperSummary: string;
+  }) => Promise<{ ok: boolean; submission?: CoinLaunchSubmission; error?: string }>;
 }
 
 const SWAP_CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'SGD', 'AED', 'JPY', 'BTC', 'ETH', 'SOL'];
@@ -86,8 +147,19 @@ export function CustodySecurityHubView({
   fxBundle,
   gasEstimates,
   vibeAudit,
+  userLimits = null,
+  userGrants = null,
+  reaLedger = null,
+  topTierVerification = null,
+  coinLaunches = [],
+  ipIntel = null,
+  marketSessions = [],
+  guideMode = false,
+  initialTab,
+  onToggleGuideMode,
   onRefreshPublicApis,
   onRefreshCustody,
+  onRefreshReaLedger,
   onQuoteFxSwap,
   onExecuteFxSwap,
   onAddAllowlist,
@@ -97,10 +169,18 @@ export function CustodySecurityHubView({
   onExecuteWithdrawal,
   onLookupBin,
   onCheckThreat,
+  onLookupIpIntel,
   onRunVibeAudit,
   onRunGeminiAnalysis,
+  onSubmitProfileStep,
+  onSubmitDocumentStep,
+  onInitiateBankStep,
+  onVerifyBankStep,
+  onSubmitCoinLaunch,
 }: CustodySecurityHubViewProps) {
-  const [activeTab, setActiveTab] = useState<CustodyHubTab>('deposit');
+  const [activeTab, setActiveTab] = useState<CustodyHubTab>(initialTab ?? 'deposit');
+  const [localBeginnerMode, setLocalBeginnerMode] = useState(guideMode);
+  const isBeginnerGuided = onToggleGuideMode ? guideMode : localBeginnerMode;
   const [selectedChain, setSelectedChain] = useState<'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX'>('BTC');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copiedAddr, setCopiedAddr] = useState(false);
@@ -142,6 +222,38 @@ export function CustodySecurityHubView({
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<GeminiEnterpriseAnalysisResult | null>(null);
+
+  // 3-Stage Top-Tier Verification state
+  const [verFullName, setVerFullName] = useState(topTierVerification?.profileFullName ?? '');
+  const [verCountry, setVerCountry] = useState(topTierVerification?.profileCountry ?? 'IN');
+  const [verDocType, setVerDocType] = useState<KycDocumentType>(topTierVerification?.documentType ?? 'Passport');
+  const [verDocNumber, setVerDocNumber] = useState('');
+  const [verLivenessOk, setVerLivenessOk] = useState(true);
+  const [verBankName, setVerBankName] = useState(topTierVerification?.bankName ?? 'HDFC Bank Institutional');
+  const [verBankAcct, setVerBankAcct] = useState('');
+  const [verDep1, setVerDep1] = useState('');
+  const [verDep2, setVerDep2] = useState('');
+  const [verBusy, setVerBusy] = useState(false);
+  const [verError, setVerError] = useState<string | null>(null);
+
+  // Coin Launchpad state
+  const [launchName, setLaunchName] = useState('');
+  const [launchSymbol, setLaunchSymbol] = useState('');
+  const [launchChain, setLaunchChain] = useState<CoinLaunchSubmission['chain']>('BASE');
+  const [launchContract, setLaunchContract] = useState('0x742d35Cc6634C0532925a3b844Bc454e4438f44e');
+  const [launchPrice, setLaunchPrice] = useState('1.25');
+  const [launchSupply, setLaunchSupply] = useState('10000000');
+  const [launchSummary, setLaunchSummary] = useState('');
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  // IP Intel lookup
+  const [ipLookupInput, setIpLookupInput] = useState('8.8.8.8');
+  const [ipLookupBusy, setIpLookupBusy] = useState(false);
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   const activeChainObj =
     custodyWallet?.chains.find((c) => c.chain === selectedChain) ?? custodyWallet?.chains[0] ?? null;
@@ -316,6 +428,45 @@ export function CustodySecurityHubView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Beginner Guided vs Expert Pro Mode Toggle */}
+          <div className="flex items-center p-0.5 rounded-xl bg-[#14161B] border border-[#24262C] text-[11px] font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setLocalBeginnerMode(true);
+                onToggleGuideMode?.(true);
+              }}
+              className={`px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+                isBeginnerGuided
+                  ? 'bg-[#F59E0B] text-[#090A0C]'
+                  : 'text-[#8B919E] hover:text-white'
+              }`}
+            >
+              Beginner Guided
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLocalBeginnerMode(false);
+                onToggleGuideMode?.(false);
+              }}
+              className={`px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+                !isBeginnerGuided
+                  ? 'bg-[#23262F] text-white'
+                  : 'text-[#8B919E] hover:text-white'
+              }`}
+            >
+              Expert Pro
+            </button>
+          </div>
+
+          <div className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono tabular-nums">
+            <div className="text-[10px] text-[#8B919E] uppercase">Verification Tier</div>
+            <div className="font-bold text-[#F59E0B]">
+              {topTierVerification?.overallTier ?? 'Unverified'}
+            </div>
+          </div>
+
           <div className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono tabular-nums">
             <div className="text-[10px] text-[#8B919E] uppercase">Audit Score</div>
             <div className="font-bold text-[#0ECB81]">
@@ -333,8 +484,9 @@ export function CustodySecurityHubView({
             onClick={() => {
               void onRefreshPublicApis();
               void onRefreshCustody();
+              void onRefreshReaLedger?.();
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14161B] hover:bg-[#1D2028] border border-[#24262C] text-xs font-semibold text-white transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14161B] hover:bg-[#1D2028] border border-[#24262C] text-xs font-semibold text-white transition-colors whitespace-nowrap shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5 text-[#F59E0B]" />
             <span>Sync Feeds</span>
@@ -342,14 +494,87 @@ export function CustodySecurityHubView({
         </div>
       </div>
 
+      {/* Beginner Guided 3-Step Strip OR Expert Separated Governance Limits Banner */}
+      {isBeginnerGuided ? (
+        <div className="bg-[#090A0D] border border-[#F59E0B]/40 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab('verification')}
+            className="p-3 rounded-xl bg-[#14161B] hover:bg-[#1A1D24] border border-[#24262C] text-left space-y-1 transition-colors"
+          >
+            <div className="font-mono text-[10px] text-[#F59E0B] uppercase">Step 1 · Identity &amp; Bank</div>
+            <div className="font-semibold text-white">Complete 3-Stage Verification</div>
+            <div className="text-[11px] text-[#8B919E]">
+              Verify Profile, ID + Liveness, and Bank Penny-Drop micro-deposits to unlock real rails.
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('deposit')}
+            className="p-3 rounded-xl bg-[#14161B] hover:bg-[#1A1D24] border border-[#24262C] text-left space-y-1 transition-colors"
+          >
+            <div className="font-mono text-[10px] text-[#0ECB81] uppercase">Step 2 · Wallet &amp; FX</div>
+            <div className="font-semibold text-white">Deposit QR &amp; Instant ECB FX</div>
+            <div className="text-[11px] text-[#8B919E]">
+              Pick your blockchain network or convert USD/EUR/INR/GBP cleanly with live ECB rates.
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('allowlist')}
+            className="p-3 rounded-xl bg-[#14161B] hover:bg-[#1A1D24] border border-[#24262C] text-left space-y-1 transition-colors"
+          >
+            <div className="font-mono text-[10px] text-[#F59E0B] uppercase">Step 3 · Safety Lock</div>
+            <div className="font-semibold text-white">Allowlist &amp; Spend Caps</div>
+            <div className="text-[11px] text-[#8B919E]">
+              Restrict withdrawals strictly to trusted addresses and enforce daily spend limits.
+            </div>
+          </button>
+        </div>
+      ) : (
+        userLimits && (
+          <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-4 text-xs font-mono tabular-nums">
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="text-[#F59E0B] font-bold">
+                TIER {userLimits.tierCode} LIMITS
+              </span>
+              <span className="text-[#8B919E]">
+                Deposit/24h: <strong className="text-white">{formatCurrency(userLimits.dailyDepositLimitUsd)}</strong>
+              </span>
+              <span className="text-[#8B919E]">
+                Withdraw/24h: <strong className="text-white">{formatCurrency(userLimits.dailyWithdrawalLimitUsd)}</strong>
+              </span>
+              <span className="text-[#8B919E]">
+                Max Order: <strong className="text-white">{formatCurrency(userLimits.singleOrderMaxUsd)}</strong>
+              </span>
+              <span className="text-[#8B919E]">
+                API RPM: <strong className="text-white">{userLimits.apiCallsPerMin}</strong>
+              </span>
+            </div>
+            {userGrants && (
+              <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                <span className={userGrants.canTradeRealMoney ? 'text-[#0ECB81]' : 'text-[#8B919E]'}>
+                  Real Trade: {userGrants.canTradeRealMoney ? 'GRANTED' : 'LOCKED'}
+                </span>
+                <span className={userGrants.canLaunchTokens ? 'text-[#0ECB81]' : 'text-[#8B919E]'}>
+                  Launchpad: {userGrants.canLaunchTokens ? 'GRANTED' : 'ADMIN APPROVAL'}
+                </span>
+              </div>
+            )}
+          </div>
+        )
+      )}
+
       {/* Section Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[#24262C] pb-3">
         {(
           [
             { id: 'deposit', label: 'Multi-Chain QR & Gas', icon: QrCode },
+            { id: 'verification', label: '3-Stage Verification', icon: UserCheck },
             { id: 'fx-swap', label: 'Instant FX Swap (ECB)', icon: ArrowLeftRight },
             { id: 'allowlist', label: 'Allowlist & Velocity Guard', icon: Lock },
-            { id: 'threat-bin', label: 'Threat IP & Card BIN', icon: ShieldAlert },
+            { id: 'rea-launchpad', label: 'REA Ledger & Launchpad', icon: Rocket },
+            { id: 'threat-bin', label: 'Threat IP, BIN & Sessions', icon: ShieldAlert },
             { id: 'auditor', label: 'Vibe Security & Gemini AI', icon: Bot },
           ] as const
         ).map((tab) => {
@@ -360,7 +585,7 @@ export function CustodySecurityHubView({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
                 active
                   ? 'bg-[#F59E0B] text-[#090A0C]'
                   : 'bg-[#090A0D] text-[#8B919E] border border-[#24262C] hover:text-white'
@@ -1079,6 +1304,590 @@ export function CustodySecurityHubView({
                 <div className="text-[11px] text-[#0ECB81]">{binResult.notes}</div>
               </div>
             )}
+          </div>
+
+          {/* Public-APIs IP Intelligence & Geolocation */}
+          <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-[#0ECB81]" />
+                <h2 className="text-sm font-semibold text-white">Public-APIs IP Geo, ASN &amp; VPN Intel</h2>
+              </div>
+              <span className="text-[11px] text-[#8B919E]">Edge Screening</span>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onLookupIpIntel) return;
+                setIpLookupBusy(true);
+                await onLookupIpIntel(ipLookupInput.trim());
+                setIpLookupBusy(false);
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="text"
+                value={ipLookupInput}
+                onChange={(e) => setIpLookupInput(e.target.value)}
+                placeholder="IPv4/IPv6 address (e.g. 8.8.8.8)"
+                className="flex-1 px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+              />
+              <button
+                type="submit"
+                disabled={ipLookupBusy || !onLookupIpIntel}
+                className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] text-xs font-semibold whitespace-nowrap"
+              >
+                {ipLookupBusy ? 'Checking…' : 'Inspect IP'}
+              </button>
+            </form>
+            {ipIntel && (
+              <div className="p-4 rounded-xl bg-[#14161B] border border-[#24262C] space-y-2 text-xs">
+                <div className="flex items-center justify-between font-mono">
+                  <span className="font-bold text-white">{ipIntel.ip}</span>
+                  <span className={ipIntel.proxyOrVpnSuspected ? 'text-[#F6465D] font-semibold' : 'text-[#0ECB81] font-semibold'}>
+                    Risk {ipIntel.riskScore}/100 · {ipIntel.proxyOrVpnSuspected ? 'PROXY/VPN' : 'CLEAN RESIDENTIAL'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#D1D5DB]">
+                  {ipIntel.city}, {ipIntel.region}, {ipIntel.country} · {ipIntel.asn} ({ipIntel.isp})
+                </div>
+                <div className="text-[10px] font-mono text-[#8B919E]">Source: {ipIntel.source}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Global Exchange Session Calendar */}
+          <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-[#F59E0B]" />
+                <h2 className="text-sm font-semibold text-white">Global Market Sessions Calendar</h2>
+              </div>
+              <span className="text-[11px] text-[#8B919E]">Multi-Venue Status</span>
+            </div>
+            <div className="divide-y divide-[#181A20] text-xs">
+              {marketSessions.length === 0 ? (
+                <div className="py-4 text-[#8B919E]">Loading global market hours…</div>
+              ) : (
+                marketSessions.map((ms) => (
+                  <div key={ms.exchange} className="py-2.5 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-white">
+                        {ms.exchange} ({ms.country})
+                      </div>
+                      <div className="text-[11px] text-[#8B919E]">
+                        {ms.openHoursLocal} · {ms.timezone} · {ms.assetFocus}
+                      </div>
+                    </div>
+                    <span
+                      className={`font-mono text-[11px] font-bold shrink-0 ${
+                        ms.status === 'OPEN'
+                          ? 'text-[#0ECB81]'
+                          : ms.status === 'PRE_MARKET'
+                          ? 'text-[#F59E0B]'
+                          : 'text-[#8B919E]'
+                      }`}
+                    >
+                      {ms.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: TOP-TIER 3-STAGE VERIFICATION (PROFILE -> DOCUMENT/LIVENESS -> BANK PENNY-DROP) */}
+      {activeTab === 'verification' && (
+        <div className="space-y-5">
+          <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <BadgeCheck className="w-5 h-5 text-[#0ECB81]" />
+                <h2 className="text-base font-bold text-white">
+                  3-Stage Institutional Identity, Document &amp; Bank Verification
+                </h2>
+              </div>
+              <p className="text-xs text-[#8B919E]">
+                Current Tier: <strong className="text-[#F59E0B]">{topTierVerification?.overallTier ?? 'Unverified'}</strong>
+                {topTierVerification?.reviewNote ? ` · ${topTierVerification.reviewNote}` : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-xs font-mono tabular-nums">
+              <span className={topTierVerification?.profileVerified ? 'text-[#0ECB81]' : 'text-[#8B919E]'}>
+                1. Profile: {topTierVerification?.profileVerified ? 'DONE' : 'PENDING'}
+              </span>
+              <span className={topTierVerification?.documentStatus === 'VERIFIED' ? 'text-[#0ECB81]' : 'text-[#F59E0B]'}>
+                2. Doc/Liveness: {topTierVerification?.documentStatus ?? 'NOT_SUBMITTED'}
+              </span>
+              <span className={topTierVerification?.bankVerificationStatus === 'VERIFIED' ? 'text-[#0ECB81]' : 'text-[#F59E0B]'}>
+                3. Bank Drop: {topTierVerification?.bankVerificationStatus ?? 'NOT_STARTED'}
+              </span>
+            </div>
+          </div>
+
+          {verError && (
+            <div className="p-3 rounded-xl bg-[#F6465D]/10 border border-[#F6465D]/40 text-xs text-[#F6465D]">
+              {verError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Stage 1: Profile */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onSubmitProfileStep) return;
+                setVerError(null);
+                setVerBusy(true);
+                const res = await onSubmitProfileStep({ fullName: verFullName, country: verCountry });
+                setVerBusy(false);
+                if (!res.ok) setVerError(res.error ?? 'Profile verification failed.');
+              }}
+              className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Stage 1 · Profile &amp; Jurisdiction</h3>
+                <span className={`text-[11px] font-mono font-bold ${topTierVerification?.profileVerified ? 'text-[#0ECB81]' : 'text-[#F59E0B]'}`}>
+                  {topTierVerification?.profileVerified ? 'VERIFIED' : 'REQUIRED'}
+                </span>
+              </div>
+              <div>
+                <label className="block text-[11px] text-[#8B919E] mb-1">Legal Full Name / Entity</label>
+                <input
+                  type="text"
+                  required
+                  value={verFullName}
+                  onChange={(e) => setVerFullName(e.target.value)}
+                  placeholder="Full legal name"
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-[#8B919E] mb-1">Country / Residency (ISO)</label>
+                <input
+                  type="text"
+                  required
+                  value={verCountry}
+                  onChange={(e) => setVerCountry(e.target.value.toUpperCase())}
+                  placeholder="IN, US, SG, AE, GB"
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={verBusy || !onSubmitProfileStep}
+                className="w-full py-2.5 rounded-xl bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] text-xs font-semibold"
+              >
+                Save &amp; Verify Stage 1 Profile
+              </button>
+            </form>
+
+            {/* Stage 2: Document & Liveness */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onSubmitDocumentStep) return;
+                setVerError(null);
+                setVerBusy(true);
+                const res = await onSubmitDocumentStep({
+                  docType: verDocType,
+                  docNumber: verDocNumber,
+                  livenessSelfieConfirmed: verLivenessOk,
+                });
+                setVerBusy(false);
+                if (!res.ok) setVerError(res.error ?? 'Document checksum failed.');
+              }}
+              className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Stage 2 · Document &amp; Liveness</h3>
+                <span className={`text-[11px] font-mono font-bold ${topTierVerification?.documentStatus === 'VERIFIED' ? 'text-[#0ECB81]' : 'text-[#F59E0B]'}`}>
+                  {topTierVerification?.documentStatus ?? 'NOT_SUBMITTED'}
+                </span>
+              </div>
+              <div>
+                <label className="block text-[11px] text-[#8B919E] mb-1">ID Document Type</label>
+                <select
+                  value={verDocType}
+                  onChange={(e) => setVerDocType(e.target.value as KycDocumentType)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs text-white"
+                >
+                  <option value="PASSPORT">Global Passport</option>
+                  <option value="PAN">India PAN Card</option>
+                  <option value="AADHAAR">India Aadhaar</option>
+                  <option value="DRIVING_LICENSE">Driving License</option>
+                  <option value="SSN_LAST4">US National ID</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-[#8B919E] mb-1">Document ID Number</label>
+                <input
+                  type="text"
+                  required
+                  value={verDocNumber}
+                  onChange={(e) => setVerDocNumber(e.target.value)}
+                  placeholder={topTierVerification?.maskedDocument || 'Enter valid ID number'}
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-[#D1D5DB] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={verLivenessOk}
+                  onChange={(e) => setVerLivenessOk(e.target.checked)}
+                  className="accent-[#0ECB81]"
+                />
+                <span>Biometric selfie liveness check completed</span>
+              </label>
+              <button
+                type="submit"
+                disabled={verBusy || !onSubmitDocumentStep}
+                className="w-full py-2.5 rounded-xl bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] text-xs font-semibold"
+              >
+                Verify Document Checksum
+              </button>
+            </form>
+
+            {/* Stage 3: Bank Penny-Drop Micro-Deposit */}
+            <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Stage 3 · Bank Penny-Drop</h3>
+                <span className={`text-[11px] font-mono font-bold ${topTierVerification?.bankVerificationStatus === 'VERIFIED' ? 'text-[#0ECB81]' : 'text-[#F59E0B]'}`}>
+                  {topTierVerification?.bankVerificationStatus ?? 'NOT_STARTED'}
+                </span>
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!onInitiateBankStep) return;
+                  setVerError(null);
+                  setVerBusy(true);
+                  const res = await onInitiateBankStep({ bankName: verBankName, accountNumber: verBankAcct });
+                  setVerBusy(false);
+                  if (!res.ok) setVerError(res.error ?? 'Failed to initiate penny-drop.');
+                }}
+                className="space-y-2.5"
+              >
+                <input
+                  type="text"
+                  required
+                  value={verBankName}
+                  onChange={(e) => setVerBankName(e.target.value)}
+                  placeholder="Bank Name"
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs text-white"
+                />
+                <input
+                  type="text"
+                  required
+                  value={verBankAcct}
+                  onChange={(e) => setVerBankAcct(e.target.value)}
+                  placeholder={topTierVerification?.bankMaskedAcct || 'Account / IBAN number'}
+                  className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={verBusy || !onInitiateBankStep}
+                  className="w-full py-2 rounded-xl bg-[#14161B] hover:bg-[#1D2028] border border-[#F59E0B]/50 text-[#F59E0B] text-xs font-semibold"
+                >
+                  Send 2 Micro-Deposits
+                </button>
+              </form>
+
+              {topTierVerification?.bankMicroDepositHint && (
+                <div className="p-2.5 rounded-lg bg-[#0ECB81]/10 border border-[#0ECB81]/30 text-[11px] font-mono text-[#0ECB81]">
+                  Sandbox Bank Statement Notice: {topTierVerification.bankMicroDepositHint}
+                </div>
+              )}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!onVerifyBankStep) return;
+                  setVerError(null);
+                  const d1 = Number.parseInt(verDep1, 10);
+                  const d2 = Number.parseInt(verDep2, 10);
+                  if (!Number.isFinite(d1) || !Number.isFinite(d2)) {
+                    setVerError('Enter both micro-deposit cent values.');
+                    return;
+                  }
+                  setVerBusy(true);
+                  const res = await onVerifyBankStep({ deposit1Cents: d1, deposit2Cents: d2 });
+                  setVerBusy(false);
+                  if (!res.ok) setVerError(res.error ?? 'Micro-deposit verification failed.');
+                }}
+                className="pt-2 border-t border-[#24262C] space-y-2"
+              >
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={verDep1}
+                    onChange={(e) => setVerDep1(e.target.value)}
+                    placeholder="Cents #1"
+                    className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={verDep2}
+                    onChange={(e) => setVerDep2(e.target.value)}
+                    placeholder="Cents #2"
+                    className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={verBusy || !onVerifyBankStep}
+                  className="w-full py-2 rounded-xl bg-[#0ECB81] hover:bg-[#0bb572] text-[#090A0C] text-xs font-semibold"
+                >
+                  Confirm Penny-Drop Amounts
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: REA CRYPTOGRAPHIC LEDGER & NEW COIN LAUNCHPAD */}
+      {activeTab === 'rea-launchpad' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Left 7 cols: REA Ledger Explorer */}
+          <div className="lg:col-span-7 bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-[#0ECB81]" />
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    REA Double-Entry Cryptographic Ledger (Resources · Events · Agents)
+                  </h2>
+                  <p className="text-[11px] text-[#8B919E]">
+                    Balanced dual-agent accounting invariant with SHA-256 hash chaining on every deposit, FX swap, trade &amp; token mint.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-[11px]">
+                <span className={reaLedger?.chainValid ? 'text-[#0ECB81] font-bold' : 'text-[#F6465D] font-bold'}>
+                  {reaLedger?.chainValid ? 'CHAIN VALID' : 'VERIFYING'}
+                </span>
+                <span className="text-[#8B919E]">
+                  {reaLedger?.totalBalancedEvents ?? 0} Balanced
+                </span>
+              </div>
+            </div>
+
+            {/* Resources Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs font-mono tabular-nums">
+              {(reaLedger?.resources ?? []).slice(0, 8).map((res) => (
+                <div key={res.symbol} className="p-2.5 rounded-xl bg-[#14161B] border border-[#24262C]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white">{res.symbol}</span>
+                    <span className="text-[10px] text-[#F59E0B]">{res.resourceType}</span>
+                  </div>
+                  <div className="text-[11px] text-[#0ECB81] mt-1">
+                    Units: {formatCompactNumber(res.totalLedgerUnits)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="w-full text-left text-[11px] font-mono tabular-nums">
+                <thead>
+                  <tr className="border-b border-[#24262C] text-[#8B919E]">
+                    <th className="py-2 pr-2">Event</th>
+                    <th className="py-2 px-2">Resource</th>
+                    <th className="py-2 px-2">Give → Take Agent</th>
+                    <th className="py-2 px-2 text-right">USD Value</th>
+                    <th className="py-2 pl-2 text-right">Hash</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#181A20]">
+                  {(reaLedger?.events ?? []).slice(0, 15).map((ev) => (
+                    <tr key={ev.id}>
+                      <td className="py-2 pr-2 font-semibold text-white">{ev.eventType}</td>
+                      <td className="py-2 px-2 text-[#F59E0B]">{ev.resourceSymbol}</td>
+                      <td className="py-2 px-2 text-[#D1D5DB]">
+                        {ev.giveAgentId} → {ev.takeAgentId}
+                      </td>
+                      <td className="py-2 px-2 text-right text-[#0ECB81]">
+                        {formatCurrency(ev.usdNotional)}
+                      </td>
+                      <td className="py-2 pl-2 text-right text-[#8B919E]">
+                        {ev.entryHash.slice(0, 10)}…
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Right 5 cols: Verified New Coin Registration & Launchpad */}
+          <div className="lg:col-span-5 space-y-5">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onSubmitCoinLaunch) return;
+                setLaunchError(null);
+                const price = Number.parseFloat(launchPrice);
+                const supply = Number.parseFloat(launchSupply);
+                if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(supply) || supply <= 0) {
+                  setLaunchError('Enter valid positive price and supply.');
+                  return;
+                }
+                setLaunchBusy(true);
+                const res = await onSubmitCoinLaunch({
+                  name: launchName.trim(),
+                  symbol: launchSymbol.trim().toUpperCase(),
+                  chain: launchChain,
+                  contractAddress: launchContract.trim(),
+                  initialPriceUsd: price,
+                  totalSupply: supply,
+                  whitepaperSummary: launchSummary.trim(),
+                });
+                setLaunchBusy(false);
+                if (!res.ok) {
+                  setLaunchError(res.error ?? 'Coin launch rejected.');
+                } else {
+                  setLaunchName('');
+                  setLaunchSymbol('');
+                  setLaunchSummary('');
+                }
+              }}
+              className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#F59E0B]" />
+                  <h3 className="text-sm font-semibold text-white">New Coin Registration &amp; Launchpad</h3>
+                </div>
+                <span className="text-[10px] font-mono text-[#0ECB81]">Admin 1-Click Mint</span>
+              </div>
+
+              {launchError && (
+                <div className="p-2.5 rounded-xl bg-[#F6465D]/10 border border-[#F6465D]/40 text-xs text-[#F6465D]">
+                  {launchError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <input
+                  type="text"
+                  required
+                  value={launchName}
+                  onChange={(e) => setLaunchName(e.target.value)}
+                  placeholder="Token Name (e.g. Nuvra AI)"
+                  className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs text-white"
+                />
+                <input
+                  type="text"
+                  required
+                  value={launchSymbol}
+                  onChange={(e) => setLaunchSymbol(e.target.value.toUpperCase())}
+                  placeholder="Ticker (e.g. NUVX-USD)"
+                  className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  value={launchChain}
+                  onChange={(e) => setLaunchChain(e.target.value as CoinLaunchSubmission['chain'])}
+                  className="px-2.5 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                >
+                  {(['ETH', 'BASE', 'SOL', 'ARB', 'MATIC', 'BTC', 'TRX'] as const).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  step="any"
+                  min="0.0001"
+                  required
+                  value={launchPrice}
+                  onChange={(e) => setLaunchPrice(e.target.value)}
+                  placeholder="Init Price USD"
+                  className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+                <input
+                  type="number"
+                  step="any"
+                  min="100"
+                  required
+                  value={launchSupply}
+                  onChange={(e) => setLaunchSupply(e.target.value)}
+                  placeholder="Total Supply"
+                  className="px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+                />
+              </div>
+
+              <input
+                type="text"
+                required
+                value={launchContract}
+                onChange={(e) => setLaunchContract(e.target.value)}
+                placeholder="Verified Smart Contract Address (screened against Threat DB)"
+                className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs font-mono text-white"
+              />
+
+              <textarea
+                rows={2}
+                required
+                value={launchSummary}
+                onChange={(e) => setLaunchSummary(e.target.value)}
+                placeholder="Tokenomics, reserve backing & audit summary (min 15 chars)..."
+                className="w-full px-3 py-2 rounded-xl bg-[#14161B] border border-[#24262C] text-xs text-white"
+              />
+
+              <button
+                type="submit"
+                disabled={launchBusy || !onSubmitCoinLaunch}
+                className="w-full py-2.5 rounded-xl bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] text-xs font-semibold"
+              >
+                {launchBusy ? 'Screening Contract & Ticker…' : 'Submit Verified Coin Proposal'}
+              </button>
+            </form>
+
+            <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-white">Launchpad Directory ({coinLaunches.length})</h4>
+                <Coins className="w-3.5 h-3.5 text-[#F59E0B]" />
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto text-xs">
+                {coinLaunches.length === 0 ? (
+                  <div className="text-[#8B919E] py-2">No token proposals submitted yet.</div>
+                ) : (
+                  coinLaunches.map((item) => (
+                    <div key={item.id} className="p-2.5 rounded-xl bg-[#14161B] border border-[#24262C] flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold text-white truncate">
+                          {item.symbol} · {item.name} ({item.chain})
+                        </div>
+                        <div className="text-[10px] text-[#8B919E] font-mono truncate">
+                          Threat: {item.threatVerdict} · ${item.initialPriceUsd} · REA {item.reaReserveMinted ? 'MINTED' : 'PENDING'}
+                        </div>
+                      </div>
+                      <span
+                        className={`font-mono text-[10px] font-bold shrink-0 ${
+                          item.status === 'APPROVED_LISTED'
+                            ? 'text-[#0ECB81]'
+                            : item.status === 'REJECTED'
+                            ? 'text-[#F6465D]'
+                            : 'text-[#F59E0B]'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

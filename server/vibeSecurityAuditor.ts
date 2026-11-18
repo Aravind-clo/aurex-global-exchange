@@ -176,7 +176,7 @@ export function runVibeSecurityAudit(runtime: {
     'Referrer-Policy: strict-origin-when-cross-origin',
     'Permissions-Policy: camera=(), microphone=(), geolocation=()',
     'Content-Security-Policy',
-    'X-Aurex-Encrypted-Channel: X25519-AES-256-GCM',
+    'X-Nuvra-Encrypted-Channel: X25519-AES-256-GCM',
   ];
   const hasHeaders =
     firewallSrc.includes('X-Content-Type-Options') &&

@@ -123,7 +123,7 @@ export function OverviewSignalsView({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
-                New to Trading? Here Is How Aurex Global Exchange Works
+                New to Trading? Here Is How Nuvra Exchange Works
               </h2>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 You are practicing with $1,000,000 in virtual paper money—zero real financial risk.

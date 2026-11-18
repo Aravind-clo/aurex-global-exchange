@@ -119,7 +119,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   1. Zero-Trust Account &amp; Password Protection
                 </h3>
                 <p>
-                  Aurex Global Exchange protects every investor identity using salted Scrypt key derivation, HMAC-SHA256 HttpOnly sessions, and optional 2-Factor Authentication (RFC-6238 Authenticator TOTP &amp; FIDO2 Hardware Passkeys). Passwords and TOTP secrets are never written to plain-text logs or exposed to the browser.
+                  Nuvra Exchange protects every investor identity using salted Scrypt key derivation, HMAC-SHA256 HttpOnly sessions, and optional 2-Factor Authentication (RFC-6238 Authenticator TOTP &amp; FIDO2 Hardware Passkeys). Passwords and TOTP secrets are never written to plain-text logs or exposed to the browser.
                 </p>
               </div>
               <div>
@@ -143,7 +143,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   4. Federated OAuth, Data Retention &amp; Regulatory Cooperation
                 </h3>
                 <p>
-                  If you sign in via Google or GitHub, Aurex stores only your verified email, display name, and provider link. You may revoke remote sessions at any time inside Wallet &amp; Vault. Records may be retained or disclosed solely as compelled by valid legal process or anti-fraud enforcement.
+                  If you sign in via Google or GitHub, Nuvra stores only your verified email, display name, and provider link. You may revoke remote sessions at any time inside Wallet &amp; Vault. Records may be retained or disclosed solely as compelled by valid legal process or anti-fraud enforcement.
                 </p>
               </div>
             </>
@@ -207,11 +207,11 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                 <p>
                   Private Contacts:{' '}
                   <span className="font-mono text-slate-900 dark:text-[#EAECEF]">
-                    security@aurexglobalexchange.com
+                    security@nuvra.exchange
                   </span>{' '}
                   · Alternative:{' '}
                   <span className="font-mono text-slate-900 dark:text-[#EAECEF]">
-                    founder@aurexglobalexchange.com
+                    founder@nuvra.exchange
                   </span>
                 </p>
                 <div className="mt-2 overflow-hidden rounded border border-slate-200 dark:border-[#2B3139]">
@@ -296,7 +296,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   1. Strictly Non-Advisory Platform · Zero Financial Advice
                 </h3>
                 <p>
-                  Aurex Global Exchange provides market software, simulated paper execution, 24-agent analytical scoreboards, and AI technical models strictly for educational and informational decision-support purposes. Nothing on Aurex constitutes investment, legal, accounting, or tax advice, solicitation, or fiduciary recommendation. You are solely responsible for your trades and capital.
+                  Nuvra Exchange provides market software, simulated paper execution, 24-agent analytical scoreboards, and AI technical models strictly for educational and informational decision-support purposes. Nothing on Nuvra constitutes investment, legal, accounting, or tax advice, solicitation, or fiduciary recommendation. You are solely responsible for your trades and capital.
                 </p>
               </div>
               <div>
@@ -304,7 +304,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   2. &ldquo;AS-IS&rdquo; Zero Warranty &amp; Maximum Liability Cap
                 </h3>
                 <p>
-                  TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE PLATFORM IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND (EXPRESS OR IMPLIED), INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. IN NO EVENT SHALL AUREX, ITS FOUNDER, DEVELOPERS, OR AFFILIATES BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR LOST-PROFIT DAMAGES, AND AGGREGATE LIABILITY SHALL NOT EXCEED THE GREATER OF USD $100 OR PLATFORM FEES PAID BY YOU IN THE PRECEDING 3 MONTHS.
+                  TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE PLATFORM IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND (EXPRESS OR IMPLIED), INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. IN NO EVENT SHALL NUVRA, ITS FOUNDER, DEVELOPERS, OR AFFILIATES BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR LOST-PROFIT DAMAGES, AND AGGREGATE LIABILITY SHALL NOT EXCEED THE GREATER OF USD $100 OR PLATFORM FEES PAID BY YOU IN THE PRECEDING 3 MONTHS.
                 </p>
               </div>
               <div>
@@ -312,7 +312,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   3. User Indemnification, Binding Arbitration &amp; Class-Action Waiver
                 </h3>
                 <p>
-                  You agree to indemnify and hold harmless Aurex Global Exchange and its Founder from any third-party claims, losses, fines, or legal expenses arising from your trading activity, breach of these Terms, tax omissions, or unlawful conduct. Any dispute shall be resolved exclusively by binding individual arbitration—YOU WAIVE ANY RIGHT TO JURY TRIAL OR CLASS-ACTION LAWSUIT.
+                  You agree to indemnify and hold harmless Nuvra Exchange and its Founder from any third-party claims, losses, fines, or legal expenses arising from your trading activity, breach of these Terms, tax omissions, or unlawful conduct. Any dispute shall be resolved exclusively by binding individual arbitration—YOU WAIVE ANY RIGHT TO JURY TRIAL OR CLASS-ACTION LAWSUIT.
                 </p>
               </div>
               <div>
@@ -320,7 +320,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   4. Demo vs. Real Accounts, Taxes, KYC &amp; Third-Party Rails
                 </h3>
                 <p>
-                  Demo mode uses virtual funds isolated from Real Accounts and Cold Vault balances. You bear sole responsibility for jurisdictional tax reporting, regulatory eligibility, sanctions compliance, and KYC verification. Third-party payment rails (NPCI UPI, PayNow, SEPA, ACH, SWIFT, bank/card networks) and external market feeds operate independently and Aurex disclaims liability for third-party outages or delays. Aurex reserves the unilateral right to suspend or terminate accounts violating anti-hacker or acceptable-use policies.
+                  Demo mode uses virtual funds isolated from Real Accounts and Cold Vault balances. You bear sole responsibility for jurisdictional tax reporting, regulatory eligibility, sanctions compliance, and KYC verification. Third-party payment rails (NPCI UPI, PayNow, SEPA, ACH, SWIFT, bank/card networks) and external market feeds operate independently and Nuvra disclaims liability for third-party outages or delays. Nuvra reserves the unilateral right to suspend or terminate accounts violating anti-hacker or acceptable-use policies.
                 </p>
               </div>
               <div>
@@ -328,7 +328,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   5. Copyright, Open-Data Attribution &amp; DMCA Safe Harbor
                 </h3>
                 <p>
-                  All Aurex charting canvases, interface typography, indicators, and proprietary engines are original works without third-party trademarks or infringing watermarks. Public news dispatches strictly show factual titles with direct links and publisher attribution under fair-use reporting, and public investor case studies cite official SEC 13F / exchange filings with zero endorsement or affiliation. Any copyright or impersonation concern may be logged in our DMCA / Anti-Scam Watchlist for immediate removal.
+                  All Nuvra charting canvases, interface typography, indicators, and proprietary engines are original works without third-party trademarks or infringing watermarks. Public news dispatches strictly show factual titles with direct links and publisher attribution under fair-use reporting, and public investor case studies cite official SEC 13F / exchange filings with zero endorsement or affiliation. Any copyright or impersonation concern may be logged in our DMCA / Anti-Scam Watchlist for immediate removal.
                 </p>
               </div>
               <div>
@@ -336,7 +336,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   6. Smart Algorithmic Bots &amp; Automated Execution Risk Waiver
                 </h3>
                 <p>
-                  Grid, DCA, EMA Momentum, Bollinger Mean-Reversion, TWAP, OCO, and Trailing Stop automations execute deterministically according to user-configured parameters. Aurex guarantees neither profitability nor uninterrupted signal execution during flash volatility, illiquid spreads, or exchange feed interruptions. You assume 100% financial risk for all autonomous bot orders.
+                  Grid, DCA, EMA Momentum, Bollinger Mean-Reversion, TWAP, OCO, and Trailing Stop automations execute deterministically according to user-configured parameters. Nuvra guarantees neither profitability nor uninterrupted signal execution during flash volatility, illiquid spreads, or exchange feed interruptions. You assume 100% financial risk for all autonomous bot orders.
                 </p>
               </div>
               <div>
@@ -344,7 +344,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   7. Rewards, XP Tiers, Promotions &amp; Anti-Sybil Forfeiture
                 </h3>
                 <p>
-                  Virtual rewards, XP loyalty tiers, promo codes, and Demo credits carry zero monetary cash value and are non-transferable. Aurex reserves absolute discretion to audit, claw back, or forfeit rewards and terminate accounts involved in Sybil multi-accounting, wash trading, referral abuse, or automated farming.
+                  Virtual rewards, XP loyalty tiers, promo codes, and Demo credits carry zero monetary cash value and are non-transferable. Nuvra reserves absolute discretion to audit, claw back, or forfeit rewards and terminate accounts involved in Sybil multi-accounting, wash trading, referral abuse, or automated farming.
                 </p>
               </div>
               <div>
@@ -352,7 +352,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   8. Anti-Exploit, Global Sanctions, Force Majeure &amp; Severability
                 </h3>
                 <p>
-                  Unauthorized probing of private configuration files, path-traversal attempts, API scraping, DDoS floods, or key-extraction attacks are strictly prohibited under computer-fraud statutes and trigger immediate IP/session quarantine. You represent that you are not located in any OFAC, UN, EU, or Indian sanctioned jurisdiction. Aurex shall not be liable for Force Majeure events (war, sovereign capital controls, internet backbone failures, or clearinghouse halts). If any clause is held unenforceable, all remaining clauses remain in full force and constitute the entire binding agreement.
+                  Unauthorized probing of private configuration files, path-traversal attempts, API scraping, DDoS floods, or key-extraction attacks are strictly prohibited under computer-fraud statutes and trigger immediate IP/session quarantine. You represent that you are not located in any OFAC, UN, EU, or Indian sanctioned jurisdiction. Nuvra shall not be liable for Force Majeure events (war, sovereign capital controls, internet backbone failures, or clearinghouse halts). If any clause is held unenforceable, all remaining clauses remain in full force and constitute the entire binding agreement.
                 </p>
               </div>
               <div>
@@ -360,7 +360,7 @@ export function LegalModal({ open, initialTab = 'privacy', onClose, onDownloadPo
                   9. Sovereign Multi-Region Continuity &amp; Anti-Blocking Jurisdiction Notice
                 </h3>
                 <p>
-                  Aurex Global Exchange operates as non-custodial analytical software and multi-rail settlement infrastructure aligned with SEC/CFTC Rule 4.41 (hypothetical performance disclosures), FinCEN, SEBI/FIU-IND, FCA PS23/6, EU MiCA, MAS, and VARA transparency frameworks. Should regional DNS or ISP restrictions affect any single access point, verified users retain uninterrupted access to their signed HMAC audit logs, self-exportable sanitized policy records, and stateless multi-domain encrypted network mirrors subject to lawful compliance in their local jurisdiction.
+                  Nuvra Exchange operates as non-custodial analytical software and multi-rail settlement infrastructure aligned with SEC/CFTC Rule 4.41 (hypothetical performance disclosures), FinCEN, SEBI/FIU-IND, FCA PS23/6, EU MiCA, MAS, and VARA transparency frameworks. Should regional DNS or ISP restrictions affect any single access point, verified users retain uninterrupted access to their signed HMAC audit logs, self-exportable sanitized policy records, and stateless multi-domain encrypted network mirrors subject to lawful compliance in their local jurisdiction.
                 </p>
               </div>
             </>

@@ -33,7 +33,7 @@ export function AiAssistantDrawer({
     {
       id: 'ai-welcome',
       role: 'assistant',
-      content: `Hello! I am your Aurex AI Coach, grounded in live market telemetry, chart predictions, and your wallet security.\n\nAsk me about ${activeSymbol} targets & support/resistance, Demo vs Real accounts, Cold Vault 2FA safety, Global UPI Corridors, or the 24-agent live leaderboard.`,
+      content: `Hello! I am your Nuvra AI Coach, grounded in live market telemetry, chart predictions, and your wallet security.\n\nAsk me about ${activeSymbol} targets & support/resistance, Demo vs Real accounts, Cold Vault 2FA safety, Global UPI Corridors, or the 24-agent live leaderboard.`,
       symbol: activeSymbol,
       poweredBy: 'Gemini 4 Hydrogen',
       createdAt: Date.now(),
@@ -106,7 +106,7 @@ export function AiAssistantDrawer({
             <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
             <div className="min-w-0">
               <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                Aurex AI Assistant
+                Nuvra AI Assistant
               </div>
               <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
                 Live Context: {activeSymbol} · {guideMode ? 'Beginner Guide' : 'Pro Quant'}

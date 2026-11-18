@@ -337,12 +337,12 @@ export function HomePortfolioView({
               className="overflow-visible"
             >
               <defs>
-                <linearGradient id="aurexAmberArea" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="nuvraAmberArea" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.32" />
                   <stop offset="100%" stopColor="#F59E0B" stopOpacity="0" />
                 </linearGradient>
               </defs>
-              <path d={sparkline.areaPath} fill="url(#aurexAmberArea)" />
+              <path d={sparkline.areaPath} fill="url(#nuvraAmberArea)" />
               <path
                 d={sparkline.linePath}
                 fill="none"
@@ -820,7 +820,7 @@ export function HomePortfolioView({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#F59E0B]">
               <CreditCard className="w-4 h-4" />
-              <span>Aurex {exchangeFeatures?.cardProfile.tier ?? 'Amber Sovereign'} Card</span>
+              <span>Nuvra {exchangeFeatures?.cardProfile.tier ?? 'Amber Sovereign'} Card</span>
             </div>
             <span className="font-mono text-xs text-[#9CA3AF]">
               {exchangeFeatures?.cardProfile.cardNumberMasked ?? '•••• 4829'}

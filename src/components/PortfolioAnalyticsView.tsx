@@ -438,7 +438,7 @@ export function PortfolioAnalyticsView({
 
   const handleExportCsv = () => {
     downloadCsv(
-      `aurex-portfolio-analytics-${new Date().toISOString().slice(0, 10)}.csv`,
+      `nuvra-portfolio-analytics-${new Date().toISOString().slice(0, 10)}.csv`,
       liveReport.attributions.map((a) => ({
         Symbol: a.symbol,
         AssetClass: a.assetClass,

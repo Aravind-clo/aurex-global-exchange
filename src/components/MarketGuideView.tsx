@@ -131,7 +131,7 @@ export function MarketGuideView({
       <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-slate-900 dark:text-[#EAECEF]">
-            Aurex Help Center, Privacy Policy &amp; Strict Legal Terms
+            Nuvra Help Center, Privacy Policy &amp; Strict Legal Terms
           </h2>
           <p className="text-xs text-slate-500 dark:text-[#848E9C] mt-0.5">
             Plain-English trading walkthroughs, key financial terms, and institutional liability protections.
@@ -467,7 +467,7 @@ export function MarketGuideView({
           <div className="bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139] rounded-lg p-5 space-y-3 text-xs leading-relaxed text-slate-600 dark:text-[#B7BDC6]">
             <div className="flex items-center gap-2 text-slate-900 dark:text-[#EAECEF] font-semibold text-sm border-b border-slate-200 dark:border-[#2B3139] pb-2.5">
               <ShieldCheck className="w-4 h-4 text-[#0ECB81]" />
-              <span>Aurex Privacy &amp; Zero-Trust Data Policy</span>
+              <span>Nuvra Privacy &amp; Zero-Trust Data Policy</span>
             </div>
             <p>
               <strong className="text-slate-900 dark:text-[#EAECEF]">1. Credential Protection:</strong> Passwords are protected via salted Scrypt key derivation and sessions use HttpOnly HMAC-SHA256 cookies. TOTP secrets and raw account digits are never logged or exposed back to the browser.
@@ -486,19 +486,19 @@ export function MarketGuideView({
               <span>Strict Terms &amp; Conditions, Liability Cap &amp; Arbitration</span>
             </div>
             <p>
-              <strong className="text-slate-900 dark:text-[#EAECEF]">1. Strictly Non-Advisory &amp; AS-IS Zero Warranty:</strong> Aurex Global Exchange provides quantitative analytics, 24-agent scoreboards, and chart forecasts for educational software use only—never financial, legal, or tax advice. Software is provided &ldquo;AS IS&rdquo; without warranties of merchantability or profit.
+              <strong className="text-slate-900 dark:text-[#EAECEF]">1. Strictly Non-Advisory &amp; AS-IS Zero Warranty:</strong> Nuvra Exchange provides quantitative analytics, 24-agent scoreboards, and chart forecasts for educational software use only—never financial, legal, or tax advice. Software is provided &ldquo;AS IS&rdquo; without warranties of merchantability or profit.
             </p>
             <p>
-              <strong className="text-slate-900 dark:text-[#EAECEF]">2. Maximum Liability Cap &amp; Indemnification:</strong> Aggregate liability of Aurex and its Founder is strictly capped at the greater of USD $100 or platform fees paid in the past 3 months. Users indemnify Aurex against losses, regulatory claims, tax obligations, or misuse arising from their trading or account activity.
+              <strong className="text-slate-900 dark:text-[#EAECEF]">2. Maximum Liability Cap &amp; Indemnification:</strong> Aggregate liability of Nuvra and its Founder is strictly capped at the greater of USD $100 or platform fees paid in the past 3 months. Users indemnify Nuvra against losses, regulatory claims, tax obligations, or misuse arising from their trading or account activity.
             </p>
             <p>
-              <strong className="text-slate-900 dark:text-[#EAECEF]">3. Binding Arbitration, Tax &amp; Third-Party Rails:</strong> All disputes are governed by mandatory binding individual arbitration with an irrevocable class-action waiver. Users are solely responsible for local taxes, KYC compliance, and sanctions rules. Aurex disclaims liability for third-party payment rail or market feed delays and reserves the right to suspend abusive accounts.
+              <strong className="text-slate-900 dark:text-[#EAECEF]">3. Binding Arbitration, Tax &amp; Third-Party Rails:</strong> All disputes are governed by mandatory binding individual arbitration with an irrevocable class-action waiver. Users are solely responsible for local taxes, KYC compliance, and sanctions rules. Nuvra disclaims liability for third-party payment rail or market feed delays and reserves the right to suspend abusive accounts.
             </p>
             <p>
               <strong className="text-slate-900 dark:text-[#EAECEF]">4. Smart Bots, Rewards &amp; Anti-Exploit Protection:</strong> Quantitative bots, OCO/trailing orders, XP quests, and X25519 network tools operate strictly AS-IS with zero profit warranty. Sybil farming, unauthorized key probing, or sanctions violations cause immediate reward forfeiture and permanent quarantine; Force Majeure and severability survive termination.
             </p>
             <p>
-              <strong className="text-slate-900 dark:text-[#EAECEF]">5. Sovereign Continuity, Zero Copyrights &amp; Exportable Policy:</strong> Aurex owns 100% original canvas charts, indicators, and branding with zero watermarks or infringing marks. Multi-region stateless DNS/origin support ensures uninterrupted software continuity across mirrors, and users may export the sanitized full security &amp; policy bundle anytime.
+              <strong className="text-slate-900 dark:text-[#EAECEF]">5. Sovereign Continuity, Zero Copyrights &amp; Exportable Policy:</strong> Nuvra owns 100% original canvas charts, indicators, and branding with zero watermarks or infringing marks. Multi-region stateless DNS/origin support ensures uninterrupted software continuity across mirrors, and users may export the sanitized full security &amp; policy bundle anytime.
             </p>
             {onDownloadPolicyBundle && (
               <div className="pt-2">

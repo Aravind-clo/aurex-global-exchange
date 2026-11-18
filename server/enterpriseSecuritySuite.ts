@@ -805,14 +805,14 @@ export function buildSanitizedSystemBlueprintMarkdown(stats: {
   totalBlockedThreats: number;
 }): string {
   const generatedIso = new Date().toISOString();
-  return `# Aurex Global Exchange — Verified System Architecture, Security & Legal Policy Bundle
+  return `# Nuvra Global Exchange — Verified System Architecture, Security & Legal Policy Bundle
 Generated: ${generatedIso}
 Classification: PUBLIC / USER-VERIFIED SANITIZED EDITION (All Private Keys, Secrets & Sensitive Server Files Strictly Redacted)
 
 ---
 
 ## 1. Platform Overview & Sovereign Resilience
-- **Platform**: Aurex Global Exchange (Original proprietary quantitative trading & custody software — zero third-party watermarks or trademarks).
+- **Platform**: Nuvra Global Exchange (Original proprietary quantitative trading & custody software — zero third-party watermarks or trademarks).
 - **Live Catalog**: ${stats.instrumentsCount} multi-asset global instruments (Crypto Coins, US Equities, India NSE/BSE, Europe, Asia-Pacific, Global Forex, Commodities, Futures & Options).
 - **Runtime Load Telemetry**: ${stats.activeConnections} active real-time WebSocket stream(s) · Edge DDoS Scrubber: \`${stats.ddos.edgeScrubberMode}\` · Threats Neutralized: ${stats.totalBlockedThreats}.
 - **High-Traffic Zero-Crash Architecture**:
@@ -856,16 +856,16 @@ Internet Traffic
 ### A. Non-Advisory Software Notice
 All AI 15m/1h/4h projections, 24-agent scoreboards, Smart Trading Bots (Grid, DCA, EMA Momentum, Bollinger Mean-Reversion, TWAP), and technical studies are strictly informational tooling—never personalized financial, tax, or legal advice.
 
-### B. Sovereign Jurisdiction & Anti-Blocking Continuity
-Aurex operates as a decentralized multi-region software analytics & self-custody toolkit aligned with FinCEN, SEC/CFTC Rule 4.41 (simulated performance disclosure), SEBI/FIU-IND, FCA PS23/6, EU MiCA, MAS, and VARA disclosure standards. Stateless multi-domain origin verification ensures uninterrupted continuity across regional edge mirrors while holding users solely responsible for local tax & regulatory compliance.
+### B. Sovereign Jurisdiction & Continuity
+Nuvra operates as a decentralized multi-region software analytics & custody platform aligned with FinCEN, SEC/CFTC, SEBI/FIU-IND, FCA PS23/6, EU MiCA, MAS, and VARA disclosure standards.
 
-### C. Zero-Copyright & Fair-Use Compliance
-- Original custom HTML5 Canvas charts, indicators (EMA, VWAP, RSI, Bollinger, Fibonacci), and SVG geometric branding—zero third-party watermarks or trademarks.
-- Public news feeds show factual headlines with publisher attribution & direct source links; public investor case studies cite official regulatory filings (SEC 13F / BSE) without endorsement.
+### C. Original Proprietary Software Notice
+- Original custom HTML5 Canvas charts, indicators (EMA, VWAP, RSI, Bollinger, Fibonacci), and SVG geometric prism branding — zero third-party watermarks or trademarks.
+- Public news feeds show factual headlines with publisher attribution & direct source links; public investor and organization profiles cite verified public filings.
 
 ### D. Privacy & Responsible Disclosure SLA
 - Zero data resale. Banking details are masked in API outputs and encrypted at rest using AES-256-GCM + FIPS 140-3 HSM key slot rotation.
-- **Security Contacts**: \`security@aurexglobalexchange.com\` · \`founder@aurexglobalexchange.com\`
+- **Security Contacts**: \`security@nuvra.exchange\` · \`founder@nuvra.exchange\`
 - **Response SLAs**: Critical (24h) · High (48h) · Medium (5 Business Days) · Low (10 Business Days) under Good-Faith Safe Harbor.
 `;
 }

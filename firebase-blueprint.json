@@ -284,6 +284,128 @@
         }
       },
       "required": ["ownerId", "overallScorePct", "passedCount", "warnCount", "failCount", "summary", "createdAt", "updatedAt"]
+    },
+    "PlatformNotificationRecord": {
+      "title": "PlatformNotificationRecord",
+      "description": "Owner-scoped alert notification synced from the backend notification engine",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["SECURITY_429", "VERIFICATION", "COIN_LAUNCH", "PASSWORD_RECOVERY", "TRADING", "LIMIT_BREACH"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["INFO", "WARNING", "CRITICAL"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "message": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 400
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "category", "severity", "title", "message", "read", "createdAt", "updatedAt"]
+    },
+    "VerificationStatusRecord": {
+      "title": "VerificationStatusRecord",
+      "description": "Non-PII verification tier status across Profile, Document, and Bank Penny-Drop checks",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "profileVerified": {
+          "type": "boolean"
+        },
+        "documentStatus": {
+          "type": "string",
+          "enum": ["NOT_SUBMITTED", "PENDING_REVIEW", "VERIFIED", "REJECTED"]
+        },
+        "bankVerificationStatus": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "MICRO_DEPOSIT_SENT", "VERIFIED", "FAILED"]
+        },
+        "overallTier": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 48
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "profileVerified", "documentStatus", "bankVerificationStatus", "overallTier", "createdAt", "updatedAt"]
+    },
+    "CoinLaunchStatusRecord": {
+      "title": "CoinLaunchStatusRecord",
+      "description": "Issuer-scoped coin registration and launchpad listing status",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64
+        },
+        "chain": {
+          "type": "string",
+          "enum": ["BTC", "ETH", "SOL", "MATIC", "ARB", "BASE", "TRX"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING_REVIEW", "APPROVED_LISTED", "REJECTED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "symbol", "name", "chain", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -314,6 +436,18 @@
     "/users/{userId}/securityAudits/{auditId}": {
       "schema": { "$ref": "#/entities/SecurityAuditSnapshot" },
       "description": "Owner-scoped live vibe-security audit summary records"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/PlatformNotificationRecord" },
+      "description": "Owner-scoped app and security alerts"
+    },
+    "/users/{userId}/verifications/{verificationId}": {
+      "schema": { "$ref": "#/entities/VerificationStatusRecord" },
+      "description": "Owner-scoped top-tier verification progress"
+    },
+    "/users/{userId}/coinLaunches/{launchId}": {
+      "schema": { "$ref": "#/entities/CoinLaunchStatusRecord" },
+      "description": "Issuer-scoped coin launchpad registration status"
     }
   }
 }

@@ -33,7 +33,7 @@ export function createAuthServerRouter(deps: AuthServerDeps): express.Router {
     if (!isFounder) {
       res.json({
         ok: true,
-        service: 'Aurex Secure Authentication Gateway',
+        service: 'Nuvra Secure Authentication Gateway',
         mode: 'zero-trust-shield',
         uptimeSec: Math.round(process.uptime()),
         timestamp: Date.now(),
@@ -50,7 +50,7 @@ export function createAuthServerRouter(deps: AuthServerDeps): express.Router {
     const stats = getAuthStats();
     res.json({
       ok: true,
-      service: 'Aurex Dedicated Authentication, Registration & GitHub OAuth Server',
+      service: 'Nuvra Dedicated Authentication, Registration & GitHub OAuth Server',
       mode: process.env.PRIVATE_AUTH_SERVER_URL ? 'proxied-private' : 'embedded-express',
       uptimeSec: Math.round(process.uptime()),
       timestamp: Date.now(),
@@ -140,7 +140,7 @@ export function createAuthServerRouter(deps: AuthServerDeps): express.Router {
       const displayName =
         (typeof decoded.name === 'string' && decoded.name.trim()) ||
         email.split('@')[0] ||
-        'Aurex Trader';
+        'Nuvra Trader';
 
       const result = findOrCreateOAuthUser(
         {

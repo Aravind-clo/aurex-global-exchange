@@ -91,7 +91,7 @@ function buildDeterministicFallbackReply(ctx: AssistantContextPayload): string {
   }
 
   if (!inst || !pred) {
-    return `I am your Aurex High-Reasoning AI Guide (${accountLabel}). Ask about chart predictions, support & resistance targets, live 24-agent scores, Demo vs Real accounts, Global UPI/bank deposits, or protecting funds in Cold Vault.`;
+    return `I am your Nuvra High-Reasoning AI Guide (${accountLabel}). Ask about chart predictions, support & resistance targets, live 24-agent scores, Demo vs Real accounts, Global UPI/bank deposits, or protecting funds in Cold Vault.`;
   }
 
   const nexusLine =
@@ -215,7 +215,7 @@ export async function generateAiAssistantResponse(
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         systemInstruction:
-          'You are the Aurex Global Exchange High-Reasoning AI Trading & Security Guide. Help beginners and experienced traders understand chart predictions (15m/1h/4h targets, support/resistance, stop-loss/take-profit), live 24-agent performance scores, safely switch between Demo Practice and Real Trading Accounts, fund via India & International UPI Corridors or Global ACH/SEPA/FPS/SWIFT across 10 currencies, and lock idle funds inside the Hacker-Proof Cold Vault with 2FA. Speak clearly in plain English (under 200 words unless deep breakdown requested), cite live numbers from context, NEVER guarantee profits, and always encourage strict risk management.',
+          'You are the Nuvra Global Exchange High-Reasoning AI Trading & Security Guide. Help beginners and experienced traders understand chart predictions (15m/1h/4h targets, support/resistance, stop-loss/take-profit), live 24-agent performance scores, safely switch between Demo Practice and Real Trading Accounts, fund via India & International UPI Corridors or Global ACH/SEPA/FPS/SWIFT across 10 currencies, and lock idle funds inside the Hacker-Proof Cold Vault with 2FA. Speak clearly in plain English (under 200 words unless deep breakdown requested), cite live numbers from context, NEVER guarantee profits, and always encourage strict risk management.',
       },
     });
 
@@ -290,7 +290,7 @@ export async function runGeminiEnterpriseAnalysis(params: {
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         systemInstruction:
-          'You are the Aurex Principal Custody Risk & Application Security Architect. Produce strict, concrete, non-fabricated assessments grounded ONLY in the supplied telemetry.',
+          'You are the Nuvra Principal Custody Risk & Application Security Architect. Produce strict, concrete, non-fabricated assessments grounded ONLY in the supplied telemetry.',
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,

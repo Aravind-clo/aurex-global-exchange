@@ -2,11 +2,22 @@ import { and, eq } from 'drizzle-orm';
 import { db, isCloudSqlConfigured } from './index.ts';
 import {
   authAuditLogs,
+  coinLaunches,
   fxSwaps,
   intelligenceLogs,
+  ipRateLimitEvents,
+  ipRateLimitRules,
+  passwordResetTokens,
+  platformNotifications,
   priceAlerts,
+  reaAgents,
+  reaEvents,
+  reaResources,
   securityAudits,
+  topTierVerifications,
   tradeOrders,
+  userFeatureGrants,
+  userLimits,
   users,
   walletAccounts,
   withdrawalAllowlist,
@@ -31,7 +42,7 @@ export async function getOrCreateUser(
       .values({
         uid,
         email,
-        displayName: options.displayName ?? existing[0]?.displayName ?? 'Meridian Trader',
+        displayName: options.displayName ?? existing[0]?.displayName ?? 'Nuvra Trader',
         role: options.role ?? existing[0]?.role ?? 'Multi-Market Investor',
         isAdmin: options.isAdmin ?? existing[0]?.isAdmin ?? false,
         marketFocus: options.marketFocus ?? existing[0]?.marketFocus ?? 'Global Multi-Asset',
@@ -417,4 +428,388 @@ export async function recordIntelligenceLogInCloudSql(params: {
     console.error('Cloud SQL intelligence log skipped:', error);
   }
 }
+
+export async function syncUserLimitsInCloudSql(params: {
+  uid: string;
+  email: string;
+  tierCode: string;
+  dailyDepositLimitUsd: number;
+  dailyWithdrawalLimitUsd: number;
+  singleOrderMaxUsd: number;
+  maxOpenPositions: number;
+  maxLeverageX: number;
+  apiCallsPerMin: number;
+  updatedByAdmin: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(userLimits)
+      .values({
+        userId: userRow.id,
+        tierCode: params.tierCode,
+        dailyDepositLimitUsd: params.dailyDepositLimitUsd,
+        dailyWithdrawalLimitUsd: params.dailyWithdrawalLimitUsd,
+        singleOrderMaxUsd: params.singleOrderMaxUsd,
+        maxOpenPositions: params.maxOpenPositions,
+        maxLeverageX: params.maxLeverageX,
+        apiCallsPerMin: params.apiCallsPerMin,
+        updatedByAdmin: params.updatedByAdmin,
+      })
+      .onConflictDoUpdate({
+        target: userLimits.userId,
+        set: {
+          tierCode: params.tierCode,
+          dailyDepositLimitUsd: params.dailyDepositLimitUsd,
+          dailyWithdrawalLimitUsd: params.dailyWithdrawalLimitUsd,
+          singleOrderMaxUsd: params.singleOrderMaxUsd,
+          maxOpenPositions: params.maxOpenPositions,
+          maxLeverageX: params.maxLeverageX,
+          apiCallsPerMin: params.apiCallsPerMin,
+          updatedByAdmin: params.updatedByAdmin,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL user_limits sync skipped:', error);
+  }
+}
+
+export async function syncUserFeatureGrantsInCloudSql(params: {
+  uid: string;
+  email: string;
+  canTradeRealMoney: boolean;
+  canCreateApiKeys: boolean;
+  canLaunchTokens: boolean;
+  canBypassVelocity: boolean;
+  canExportAudit: boolean;
+  updatedByAdmin: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(userFeatureGrants)
+      .values({
+        userId: userRow.id,
+        canTradeRealMoney: params.canTradeRealMoney,
+        canCreateApiKeys: params.canCreateApiKeys,
+        canLaunchTokens: params.canLaunchTokens,
+        canBypassVelocity: params.canBypassVelocity,
+        canExportAudit: params.canExportAudit,
+        updatedByAdmin: params.updatedByAdmin,
+      })
+      .onConflictDoUpdate({
+        target: userFeatureGrants.userId,
+        set: {
+          canTradeRealMoney: params.canTradeRealMoney,
+          canCreateApiKeys: params.canCreateApiKeys,
+          canLaunchTokens: params.canLaunchTokens,
+          canBypassVelocity: params.canBypassVelocity,
+          canExportAudit: params.canExportAudit,
+          updatedByAdmin: params.updatedByAdmin,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL user_feature_grants sync skipped:', error);
+  }
+}
+
+export async function syncIpRateLimitRuleInCloudSql(params: {
+  externalId: string;
+  ipPattern: string;
+  maskedIp: string;
+  maxRequestsPerMin: number;
+  burstAllowance: number;
+  status: string;
+  blockedCount: number;
+  reason: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    await db
+      .insert(ipRateLimitRules)
+      .values(params)
+      .onConflictDoUpdate({
+        target: ipRateLimitRules.externalId,
+        set: {
+          maxRequestsPerMin: params.maxRequestsPerMin,
+          burstAllowance: params.burstAllowance,
+          status: params.status,
+          blockedCount: params.blockedCount,
+          reason: params.reason,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL ip_rate_limit_rules sync skipped:', error);
+  }
+}
+
+export async function recordIpRateLimitEventInCloudSql(params: {
+  externalId: string;
+  maskedIp: string;
+  path: string;
+  method: string;
+  limitApplied: number;
+  requestsInWindow: number;
+  statusCode: number;
+  notifiedAdmin: boolean;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    await db
+      .insert(ipRateLimitEvents)
+      .values(params)
+      .onConflictDoNothing({ target: ipRateLimitEvents.externalId });
+  } catch (error) {
+    console.error('Cloud SQL ip_rate_limit_events sync skipped:', error);
+  }
+}
+
+export async function recordPasswordResetTokenInCloudSql(params: {
+  uid: string;
+  email: string;
+  tokenHash: string;
+  expiresAtMs: number;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db.insert(passwordResetTokens).values({
+      userId: userRow.id,
+      tokenHash: params.tokenHash,
+      expiresAt: new Date(params.expiresAtMs),
+    });
+  } catch (error) {
+    console.error('Cloud SQL password_reset_tokens sync skipped:', error);
+  }
+}
+
+export async function consumePasswordResetTokenInCloudSql(tokenHash: string) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    await db
+      .update(passwordResetTokens)
+      .set({ consumed: true })
+      .where(eq(passwordResetTokens.tokenHash, tokenHash));
+  } catch (error) {
+    console.error('Cloud SQL password reset consume skipped:', error);
+  }
+}
+
+export async function recordReaEventInCloudSql(params: {
+  externalEventId: string;
+  eventType: string;
+  resourceSymbol: string;
+  resourceName: string;
+  resourceType: string;
+  referenceUsdPrice: number;
+  giveAgentId: string;
+  giveAgentLabel: string;
+  giveAgentRole: string;
+  takeAgentId: string;
+  takeAgentLabel: string;
+  takeAgentRole: string;
+  quantity: number;
+  usdNotional: number;
+  referenceId: string;
+  invariantBalanced: boolean;
+  prevHash: string;
+  entryHash: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    await db
+      .insert(reaResources)
+      .values({
+        symbol: params.resourceSymbol,
+        name: params.resourceName,
+        resourceType: params.resourceType,
+        totalLedgerUnits: params.quantity,
+        referenceUsdPrice: params.referenceUsdPrice,
+      })
+      .onConflictDoUpdate({
+        target: reaResources.symbol,
+        set: {
+          referenceUsdPrice: params.referenceUsdPrice,
+          updatedAt: new Date(),
+        },
+      });
+
+    for (const ag of [
+      { agentId: params.giveAgentId, label: params.giveAgentLabel, agentRole: params.giveAgentRole },
+      { agentId: params.takeAgentId, label: params.takeAgentLabel, agentRole: params.takeAgentRole },
+    ]) {
+      await db
+        .insert(reaAgents)
+        .values({
+          agentId: ag.agentId,
+          label: ag.label,
+          agentRole: ag.agentRole,
+          verified: true,
+        })
+        .onConflictDoNothing({ target: reaAgents.agentId });
+    }
+
+    await db
+      .insert(reaEvents)
+      .values({
+        externalEventId: params.externalEventId,
+        eventType: params.eventType,
+        resourceSymbol: params.resourceSymbol,
+        giveAgentId: params.giveAgentId,
+        takeAgentId: params.takeAgentId,
+        quantity: params.quantity,
+        usdNotional: params.usdNotional,
+        referenceId: params.referenceId,
+        invariantBalanced: params.invariantBalanced,
+        prevHash: params.prevHash,
+        entryHash: params.entryHash,
+      })
+      .onConflictDoNothing({ target: reaEvents.externalEventId });
+  } catch (error) {
+    console.error('Cloud SQL REA event sync skipped:', error);
+  }
+}
+
+export async function syncCoinLaunchInCloudSql(params: {
+  externalId: string;
+  uid: string;
+  ownerEmail: string;
+  name: string;
+  symbol: string;
+  chain: string;
+  contractAddress: string;
+  totalSupply: number;
+  initialPriceUsd: number;
+  whitepaperSummary: string;
+  auditHash: string;
+  threatVerdict: string;
+  status: string;
+  adminNote: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.ownerEmail);
+    await db
+      .insert(coinLaunches)
+      .values({
+        externalId: params.externalId,
+        userId: userRow.id,
+        ownerEmail: params.ownerEmail,
+        name: params.name,
+        symbol: params.symbol,
+        chain: params.chain,
+        contractAddress: params.contractAddress,
+        totalSupply: params.totalSupply,
+        initialPriceUsd: params.initialPriceUsd,
+        whitepaperSummary: params.whitepaperSummary,
+        auditHash: params.auditHash,
+        threatVerdict: params.threatVerdict,
+        status: params.status,
+        adminNote: params.adminNote,
+      })
+      .onConflictDoUpdate({
+        target: coinLaunches.externalId,
+        set: {
+          status: params.status,
+          adminNote: params.adminNote,
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL coin_launches sync skipped:', error);
+  }
+}
+
+export async function syncTopTierVerificationInCloudSql(params: {
+  uid: string;
+  email: string;
+  profileVerified: boolean;
+  profileCountry: string;
+  documentStatus: string;
+  documentType: string;
+  maskedDocument: string;
+  bankVerificationStatus: string;
+  bankName: string;
+  overallTier: string;
+  reviewNote: string;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    const userRow = await getOrCreateUser(params.uid, params.email);
+    await db
+      .insert(topTierVerifications)
+      .values({
+        userId: userRow.id,
+        profileVerified: params.profileVerified,
+        profileCountry: params.profileCountry,
+        documentStatus: params.documentStatus,
+        documentType: params.documentType,
+        maskedDocument: params.maskedDocument,
+        bankVerificationStatus: params.bankVerificationStatus,
+        bankName: params.bankName,
+        overallTier: params.overallTier,
+        reviewNote: params.reviewNote,
+      })
+      .onConflictDoUpdate({
+        target: topTierVerifications.userId,
+        set: {
+          profileVerified: params.profileVerified,
+          profileCountry: params.profileCountry,
+          documentStatus: params.documentStatus,
+          documentType: params.documentType,
+          maskedDocument: params.maskedDocument,
+          bankVerificationStatus: params.bankVerificationStatus,
+          bankName: params.bankName,
+          overallTier: params.overallTier,
+          reviewNote: params.reviewNote,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL top_tier_verifications sync skipped:', error);
+  }
+}
+
+export async function recordPlatformNotificationInCloudSql(params: {
+  externalId: string;
+  recipientScope: string;
+  recipientUserId?: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  read: boolean;
+  gmailDispatched: boolean;
+}) {
+  if (!isCloudSqlConfigured()) return;
+  try {
+    await db
+      .insert(platformNotifications)
+      .values({
+        externalId: params.externalId,
+        recipientScope: params.recipientScope,
+        recipientUserId: params.recipientUserId ?? null,
+        category: params.category,
+        severity: params.severity,
+        title: params.title,
+        message: params.message,
+        read: params.read,
+        gmailDispatched: params.gmailDispatched,
+      })
+      .onConflictDoUpdate({
+        target: platformNotifications.externalId,
+        set: {
+          read: params.read,
+          gmailDispatched: params.gmailDispatched,
+        },
+      });
+  } catch (error) {
+    console.error('Cloud SQL notification sync skipped:', error);
+  }
+}
+
 

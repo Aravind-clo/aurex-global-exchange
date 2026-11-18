@@ -5,6 +5,8 @@ import type {
   CoinGeckoCoinTelemetry,
   FrankfurterFxBundle,
   Instrument,
+  IpIntelLookupResult,
+  MarketSessionCalendarItem,
   ThreatCheckResult,
 } from '../src/types/market.ts';
 import { sanitizePlainText } from './securityFirewall.ts';
@@ -21,7 +23,7 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 3500, headers?: 
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'aurex-exchange-hub/1.0',
+        'User-Agent': 'nuvra-exchange-hub/1.0',
         ...headers,
       },
     });
@@ -54,7 +56,7 @@ export async function fetchCoinGeckoLiveMarkets(
   }
 
   const raw = await fetchJsonWithTimeout<RawCgCoin[]>(
-    'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=15&page=1&sparkline=false&price_change_percentage=24h',
+    'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=30&page=1&sparkline=false&price_change_percentage=24h',
     3800
   );
 
@@ -77,7 +79,7 @@ export async function fetchCoinGeckoLiveMarkets(
 
   const cryptoFallback = instruments
     .filter((i) => i.assetClass === 'crypto')
-    .slice(0, 15)
+    .slice(0, 30)
     .map((inst, idx) => ({
       id: inst.symbol.toLowerCase(),
       symbol: inst.symbol.replace(/-USD$/, ''),
@@ -663,3 +665,95 @@ export async function fetchOnChainGasEstimates(
   gasCache = { expiresAt: now + 30_000, data: list };
   return list;
 }
+
+export async function fetchIpIntel(rawIp: string): Promise<IpIntelLookupResult> {
+  const cleanIp = sanitizePlainText(rawIp, 64) || '8.8.8.8';
+  const now = Date.now();
+  const isPrivate =
+    cleanIp === '127.0.0.1' ||
+    cleanIp === '::1' ||
+    cleanIp.startsWith('10.') ||
+    cleanIp.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(cleanIp);
+
+  if (isPrivate) {
+    return {
+      ip: cleanIp,
+      country: 'Internal Loopback / Private RFC1918',
+      region: 'Private Subnet',
+      city: 'Localhost',
+      asn: 'AS-LOCAL',
+      isp: 'Internal Gateway',
+      proxyOrVpnSuspected: false,
+      riskScore: 10,
+      source: 'Nuvra Edge Classifier',
+      checkedAt: now,
+    };
+  }
+
+  interface IpWhoFullResp {
+    success?: boolean;
+    country?: string;
+    region?: string;
+    city?: string;
+    connection?: { asn?: number; org?: string; isp?: string };
+  }
+
+  const data = await fetchJsonWithTimeout<IpWhoFullResp>(
+    `https://ipwho.is/${encodeURIComponent(cleanIp)}`,
+    3000
+  );
+  if (data && data.success) {
+    const ispText = data.connection?.isp || data.connection?.org || 'Commercial Carrier';
+    const suspected = /(vpn|proxy|tor|hosting|datacenter|cloud|hetzner|digitalocean)/i.test(ispText);
+    return {
+      ip: cleanIp,
+      country: data.country || 'Unknown',
+      region: data.region || 'Unknown',
+      city: data.city || 'Unknown',
+      asn: data.connection?.asn ? `AS${data.connection.asn}` : 'AS0',
+      isp: ispText,
+      proxyOrVpnSuspected: suspected,
+      riskScore: suspected ? 48 : 8,
+      source: 'ipwho.is Public IP Intel',
+      checkedAt: now,
+    };
+  }
+
+  return {
+    ip: cleanIp,
+    country: 'Global Network',
+    region: 'Public Transit',
+    city: 'Routable Edge',
+    asn: 'AS-PUBLIC',
+    isp: 'Standard ISP',
+    proxyOrVpnSuspected: false,
+    riskScore: 15,
+    source: 'Nuvra IP Fallback',
+    checkedAt: now,
+  };
+}
+
+export function fetchMarketSessionsDirectory(): MarketSessionCalendarItem[] {
+  const now = new Date();
+  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+  const isWeekday = now.getUTCDay() >= 1 && now.getUTCDay() <= 5;
+  const statusInRange = (startUtc: number, endUtc: number): MarketSessionCalendarItem['status'] => {
+    if (!isWeekday) return 'CLOSED';
+    if (utcHour >= startUtc && utcHour < endUtc) return 'OPEN';
+    if (utcHour >= startUtc - 1 && utcHour < startUtc) return 'PRE_MARKET';
+    return 'CLOSED';
+  };
+
+  return [
+    { exchange: 'Crypto 24/7 Spot & Perps', country: 'Global', timezone: 'UTC', openHoursLocal: '00:00 – 24:00 (24/7)', status: 'OPEN', assetFocus: 'BTC, ETH, SOL, NUVX & Altcoins' },
+    { exchange: 'NYSE & NASDAQ', country: 'United States', timezone: 'America/New_York', openHoursLocal: '09:30 – 16:00 ET', status: statusInRange(14.5, 21), assetFocus: 'US Equities, Tech & Options' },
+    { exchange: 'NSE & BSE India', country: 'India', timezone: 'Asia/Kolkata', openHoursLocal: '09:15 – 15:30 IST', status: statusInRange(3.75, 10), assetFocus: 'Nifty 50, BankNifty & Indian Equities' },
+    { exchange: 'LSE London', country: 'United Kingdom', timezone: 'Europe/London', openHoursLocal: '08:00 – 16:30 GMT', status: statusInRange(8, 16.5), assetFocus: 'FTSE Bluechips & G10 FX' },
+    { exchange: 'XETRA & Euronext', country: 'European Union', timezone: 'Europe/Berlin', openHoursLocal: '09:00 – 17:30 CET', status: statusInRange(8, 16.5), assetFocus: 'DAX, ASML, LVMH & Euro Bonds' },
+    { exchange: 'TSE Tokyo', country: 'Japan', timezone: 'Asia/Tokyo', openHoursLocal: '09:00 – 15:00 JST', status: statusInRange(0, 6), assetFocus: 'Nikkei, Sony, Toyota & JPY FX' },
+    { exchange: 'HKEX Hong Kong', country: 'Hong Kong', timezone: 'Asia/Hong_Kong', openHoursLocal: '09:30 – 16:00 HKT', status: statusInRange(1.5, 8), assetFocus: 'Alibaba, Tencent & Asia ADRs' },
+    { exchange: 'FX & Precious Metals', country: 'London / NY', timezone: 'UTC', openHoursLocal: 'Sun 22:00 – Fri 22:00', status: isWeekday ? 'OPEN' : 'CLOSED', assetFocus: 'EUR-USD, USD-INR, Gold & Crude' },
+  ];
+}
+

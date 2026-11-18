@@ -558,7 +558,6 @@ export interface AdminServerOverview {
   dualMfaReadyUsers: number;
   uptimeSec: number;
   storageBackend: string;
-  storageFile: string;
   keyStatus: Array<{
     keyName: string;
     scope: string;
@@ -793,6 +792,7 @@ export interface InitPayload {
   rewardsState?: UserRewardsState;
   socialGraph?: SocialGraphState;
   bots?: TradingBotRecord[];
+  notifications?: PlatformNotification[];
 }
 
 export type WsServerMessage =
@@ -867,6 +867,7 @@ export type WsServerMessage =
   | { type: 'agents:performance'; payload: AgentLivePerformance[] }
   | { type: 'global:monitor'; payload: GlobalMonitorSnapshot }
   | { type: 'admin:auth_event'; payload: AuthAuditEvent }
+  | { type: 'notifications:update'; payload: PlatformNotification[] }
   | { type: 'error'; payload: { message: string } };
 
 export type WsClientMessage =
@@ -932,7 +933,7 @@ export interface ScamReportRecord {
 
 export interface InvestorProfile {
   id: string;
-  category: 'famous' | 'community';
+  category: 'famous' | 'organization' | 'community';
   name: string;
   handle: string;
   title: string;
@@ -1684,5 +1685,195 @@ export interface GeminiEnterpriseAnalysisResult {
   actionPlan: string[];
   generatedAt: number;
 }
+
+export interface UserLimitRecord {
+  userId: string;
+  tierCode: 'STARTER' | 'VERIFIED' | 'PRO' | 'INSTITUTIONAL';
+  dailyDepositLimitUsd: number;
+  dailyWithdrawalLimitUsd: number;
+  singleOrderMaxUsd: number;
+  maxOpenPositions: number;
+  maxLeverageX: number;
+  apiCallsPerMin: number;
+  updatedByAdmin: string;
+  updatedAt: number;
+}
+
+export interface UserFeatureGrants {
+  userId: string;
+  canTradeRealMoney: boolean;
+  canCreateApiKeys: boolean;
+  canLaunchTokens: boolean;
+  canBypassVelocity: boolean;
+  canExportAudit: boolean;
+  updatedByAdmin: string;
+  updatedAt: number;
+}
+
+export interface IpRateLimitRule {
+  id: string;
+  ipPattern: string;
+  maskedIp: string;
+  maxRequestsPerMin: number;
+  burstAllowance: number;
+  status: 'ACTIVE' | 'THROTTLED' | 'BLOCKED';
+  hitCount60s: number;
+  blockedCount: number;
+  reason: string;
+  updatedAt: number;
+}
+
+export interface IpRateLimitEvent {
+  id: string;
+  maskedIp: string;
+  path: string;
+  method: string;
+  limitApplied: number;
+  requestsInWindow: number;
+  statusCode: 429 | 403;
+  notifiedAdmin: boolean;
+  createdAt: number;
+}
+
+export interface ReaResourceRecord {
+  symbol: string;
+  name: string;
+  resourceType: 'FIAT' | 'CRYPTO' | 'EQUITY' | 'LAUNCHED_TOKEN';
+  totalLedgerUnits: number;
+  referenceUsdPrice: number;
+  updatedAt: number;
+}
+
+export interface ReaAgentRecord {
+  agentId: string;
+  label: string;
+  agentRole: 'TRADER' | 'HOUSE_DESK' | 'TOKEN_ISSUER' | 'CLEARING_RAIL';
+  verified: boolean;
+}
+
+export interface ReaEventRecord {
+  id: string;
+  eventType: 'DEPOSIT' | 'WITHDRAWAL' | 'TRADE_FILL' | 'FX_SWAP' | 'TOKEN_MINT';
+  resourceSymbol: string;
+  giveAgentId: string;
+  takeAgentId: string;
+  quantity: number;
+  usdNotional: number;
+  referenceId: string;
+  invariantBalanced: boolean;
+  prevHash: string;
+  entryHash: string;
+  createdAt: number;
+}
+
+export interface ReaLedgerSnapshot {
+  resources: ReaResourceRecord[];
+  agents: ReaAgentRecord[];
+  events: ReaEventRecord[];
+  totalBalancedEvents: number;
+  chainValid: boolean;
+  updatedAt: number;
+}
+
+export interface TopTierVerificationBundle {
+  userId: string;
+  profileVerified: boolean;
+  profileFullName: string;
+  profileCountry: string;
+  profileCompletenessPct: number;
+  documentStatus: 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+  documentType: KycDocumentType;
+  maskedDocument: string;
+  documentChecksumOk: boolean;
+  livenessOk: boolean;
+  bankVerificationStatus: 'NOT_STARTED' | 'MICRO_DEPOSIT_SENT' | 'VERIFIED' | 'FAILED';
+  bankName: string;
+  bankMaskedAcct: string;
+  bankMicroDepositHint?: string;
+  overallTier: 'Unverified' | 'Tier 1 Profile' | 'Tier 2 Documented' | 'Tier 3 Full Bank & Custody';
+  reviewNote: string;
+  updatedAt: number;
+}
+
+export interface CoinLaunchSubmission {
+  id: string;
+  ownerId: string;
+  ownerEmail: string;
+  name: string;
+  symbol: string;
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  contractAddress: string;
+  totalSupply: number;
+  initialPriceUsd: number;
+  whitepaperSummary: string;
+  auditHash: string;
+  threatVerdict: 'CLEAN' | 'SUSPICIOUS' | 'BLOCKED';
+  tickerUnique: boolean;
+  reaReserveMinted: boolean;
+  status: 'PENDING_REVIEW' | 'APPROVED_LISTED' | 'REJECTED';
+  adminNote: string;
+  createdAt: number;
+  listedAt?: number;
+}
+
+export interface PlatformNotification {
+  id: string;
+  recipientScope: 'ADMIN' | 'USER';
+  recipientUserId?: string;
+  category: 'SECURITY_429' | 'VERIFICATION' | 'COIN_LAUNCH' | 'PASSWORD_RECOVERY' | 'TRADING' | 'LIMIT_BREACH';
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  title: string;
+  message: string;
+  read: boolean;
+  gmailDispatched: boolean;
+  createdAt: number;
+}
+
+export interface BackendChartAnalytics {
+  symbol: string;
+  lastPrice: number;
+  vwap: number;
+  atr14: number;
+  sma20: number;
+  ema50: number;
+  bollingerUpper: number;
+  bollingerMiddle: number;
+  bollingerLower: number;
+  bollingerWidthPct: number;
+  macdLine: number;
+  macdSignal: number;
+  macdHistogram: number;
+  rsi14: number;
+  orderBookImbalancePct: number;
+  bidDepthUsd: number;
+  askDepthUsd: number;
+  realizedVolAnnualPct: number;
+  liquidityRatio: number;
+  sharpeEstimate: number;
+  computedAt: number;
+}
+
+export interface IpIntelLookupResult {
+  ip: string;
+  country: string;
+  region: string;
+  city: string;
+  asn: string;
+  isp: string;
+  proxyOrVpnSuspected: boolean;
+  riskScore: number;
+  source: string;
+  checkedAt: number;
+}
+
+export interface MarketSessionCalendarItem {
+  exchange: string;
+  country: string;
+  timezone: string;
+  openHoursLocal: string;
+  status: 'OPEN' | 'PRE_MARKET' | 'CLOSED';
+  assetFocus: string;
+}
+
 
 

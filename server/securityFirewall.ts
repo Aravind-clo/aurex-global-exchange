@@ -9,6 +9,7 @@ import type {
   SecurityStatus,
   VaultTransferRecord,
 } from '../src/types/market.ts';
+import { checkIpEdgeLimit } from './governanceAndReaEngine.ts';
 
 function resolveVaultMasterSecret(): {
   secret: string;
@@ -382,7 +383,7 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       return;
     }
 
-    res.setHeader('X-Aurex-Encrypted-Channel', 'X25519-AES-256-GCM');
+    res.setHeader('X-Nuvra-Encrypted-Channel', 'X25519-AES-256-GCM');
 
     // CSRF Origin Defense on state-mutating requests (proxy-aware + custom domains)
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
@@ -462,8 +463,10 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       req.path.startsWith('/api/v1/security') ||
       req.path.startsWith('/api/v1/nexus/execute');
 
+    const rawIp = extractRawClientIp(req);
     const isStressProbe = req.path === '/api/v1/engine/stress-test';
-    const isPentestProbe = req.headers['x-aurex-pentest'] === '1';
+    const isPentestProbe =
+      req.headers['x-nuvra-pentest'] === '1' || req.headers['x-aurex-pentest'] === '1';
     const bucketKey = `${bucketIpHash}:${isAuthOrSensitive ? 'sensitive' : 'api'}`;
     const limit = isAuthOrSensitive ? 50 : 600;
     const windowMs = 60_000;
@@ -476,6 +479,50 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
     if (!rateBuckets.has(bucketKey) && rateBuckets.size >= MAX_RATE_BUCKET_ENTRIES) {
       const oldestKey = rateBuckets.keys().next().value;
       if (oldestKey) rateBuckets.delete(oldestKey);
+    }
+
+    const ipEdgeResult = checkIpEdgeLimit({
+      rawIp,
+      maskedIp,
+      path: req.path,
+      method: req.method,
+      defaultLimitPerMin: limit,
+      bypassRateLimit: !ctx.securityStatus.firewallActive || isStressProbe || isPentestProbe,
+    });
+    res.setHeader('X-RateLimit-Limit', String(ipEdgeResult.limitApplied));
+    res.setHeader('X-RateLimit-Remaining', String(ipEdgeResult.remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil((now + windowMs) / 1000)));
+
+    if (!ipEdgeResult.allowed) {
+      blockedFloodRequests += 1;
+      lastFloodBlockedAt = now;
+      const incident: FirewallIncident = {
+        id: `fw-${now}-${crypto.randomBytes(2).toString('hex')}`,
+        severity: ipEdgeResult.statusCode === 403 ? 'CRITICAL' : 'HIGH',
+        category: 'RATE_LIMIT',
+        ruleTriggered: ipEdgeResult.reason ?? `IP limit exceeded (${ipEdgeResult.requestsInWindow}/${ipEdgeResult.limitApplied} req/min)`,
+        method: req.method,
+        path: req.path,
+        maskedIp,
+        action: ipEdgeResult.statusCode === 403 ? 'BLOCKED' : 'THROTTLED',
+        createdAt: now,
+      };
+      ctx.firewallIncidents.unshift(incident);
+      if (ctx.firewallIncidents.length > 80) ctx.firewallIncidents.pop();
+      ctx.securityStatus.totalBlocked += 1;
+      ctx.onSecurityEvent(incident);
+      res.setHeader('Retry-After', String(ipEdgeResult.retryAfterSec));
+      res.status(ipEdgeResult.statusCode).json({
+        error:
+          ipEdgeResult.statusCode === 429
+            ? '429: Too many requests — blocked by Nuvra IP Rate Limiter.'
+            : ipEdgeResult.reason ?? 'Blocked by Nuvra IP Security Policy.',
+        retryAfterSec: ipEdgeResult.retryAfterSec,
+        limitApplied: ipEdgeResult.limitApplied,
+        requestsInWindow: ipEdgeResult.requestsInWindow,
+        incidentId: incident.id,
+      });
+      return;
     }
 
     const activeCooldownUntil = cooldownIpsUntil.get(bucketIpHash) ?? 0;
@@ -511,7 +558,7 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       ctx.onSecurityEvent(incident);
       res.setHeader('Retry-After', '30');
       res.status(429).json({
-        error: 'Blocked by Aurex L7 DDoS & Rate Shield: Threshold exceeded.',
+        error: '429: Too many requests — Nuvra L7 DDoS & Rate Shield.',
         incidentId: incident.id,
       });
       return;
@@ -545,7 +592,7 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
       ctx.securityStatus.totalBlocked += 1;
       ctx.onSecurityEvent(incident);
       res.status(403).json({
-        error: 'Blocked by Aurex Zero-Trust WAF (Prototype Pollution attempt). Incident logged.',
+        error: 'Blocked by Nuvra Zero-Trust WAF (Prototype Pollution attempt). Incident logged.',
         incidentId: incident.id,
       });
       return;
@@ -577,7 +624,7 @@ export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
           ctx.securityStatus.totalBlocked += 1;
           ctx.onSecurityEvent(incident);
           res.status(403).json({
-            error: `Blocked by Aurex Zero-Trust WAF (${sig.name}). Incident logged.`,
+            error: `Blocked by Nuvra Zero-Trust WAF (${sig.name}). Incident logged.`,
             incidentId: incident.id,
           });
           return;

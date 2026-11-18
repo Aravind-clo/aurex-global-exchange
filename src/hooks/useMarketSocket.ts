@@ -10,6 +10,7 @@ import type {
   AuthAuditEvent,
   AuthSessionInfo,
   AuthUser,
+  BackendChartAnalytics,
   BankAccountRecord,
   BankRailType,
   BinLookupResult,
@@ -20,6 +21,7 @@ import type {
   ChainGasEstimate,
   ChartTimeframe,
   CoinGeckoCoinTelemetry,
+  CoinLaunchSubmission,
   CommunityContributor,
   CountryGuideline,
   CustodyWalletSnapshot,
@@ -44,8 +46,12 @@ import type {
   HsmKeySlot,
   Instrument,
   InvestorProfile,
+  IpIntelLookupResult,
+  IpRateLimitEvent,
+  IpRateLimitRule,
   KycDocumentType,
   KycVerificationRecord,
+  MarketSessionCalendarItem,
   MfaChallengePayload,
   MlPrediction,
   NewsItem,
@@ -56,9 +62,11 @@ import type {
   OrderBook,
   PasskeyCredentialInfo,
   PentestReport,
+  PlatformNotification,
   PortfolioAnalyticsReport,
   Position,
   PriceAlert,
+  ReaLedgerSnapshot,
   ReferralPromoProfile,
   RiskEventEntry,
   ScamReportRecord,
@@ -68,10 +76,13 @@ import type {
   StressTestResult,
   SupportedCurrency,
   ThreatCheckResult,
+  TopTierVerificationBundle,
   TotpEnrollmentSetup,
   TradeTapeItem,
   TradingBotRecord,
   TrustedDeviceRecord,
+  UserFeatureGrants,
+  UserLimitRecord,
   UserRewardsState,
   VaultTransferRecord,
   VibeSecurityAuditReport,
@@ -83,11 +94,18 @@ import type {
 import { signInWithPopup } from 'firebase/auth';
 import {
   auth,
+  connectAdminGmailAlerts,
   deleteAllowlistEntryFromFirestore,
+  disconnectAdminGmailAlerts,
+  getGmailConnectionStatus,
   googleAuthProvider,
+  sendAdminAlertViaGmail,
   syncAllowlistEntryToFirestore,
+  syncCoinLaunchToFirestore,
   syncFirebaseUserProfile,
+  syncNotificationToFirestore,
   syncSecurityAuditToFirestore,
+  syncVerificationStatusToFirestore,
   syncWalletChainToFirestore,
 } from '../lib/firebase';
 import { createEncryptedEnvelopeHeader, setActiveMeshKeyId } from '../utils/clientCrypto';
@@ -118,11 +136,16 @@ function arrayBufferToB64Url(buf: ArrayBuffer | Uint8Array): string {
   return window.btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-const BEARER_STORAGE_KEY = 'meridian_bearer_token';
+const BEARER_STORAGE_KEY = 'nuvra_bearer_token';
+const LEGACY_BEARER_STORAGE_KEY = 'meridian_bearer_token';
 
 function getStoredBearerToken(): string | null {
   try {
-    return typeof window !== 'undefined' ? window.sessionStorage.getItem(BEARER_STORAGE_KEY) : null;
+    if (typeof window === 'undefined') return null;
+    return (
+      window.sessionStorage.getItem(BEARER_STORAGE_KEY) ||
+      window.sessionStorage.getItem(LEGACY_BEARER_STORAGE_KEY)
+    );
   } catch {
     return null;
   }
@@ -131,8 +154,13 @@ function getStoredBearerToken(): string | null {
 function storeBearerToken(token?: string | null) {
   try {
     if (typeof window === 'undefined') return;
-    if (token) window.sessionStorage.setItem(BEARER_STORAGE_KEY, token);
-    else window.sessionStorage.removeItem(BEARER_STORAGE_KEY);
+    if (token) {
+      window.sessionStorage.setItem(BEARER_STORAGE_KEY, token);
+      window.sessionStorage.removeItem(LEGACY_BEARER_STORAGE_KEY);
+    } else {
+      window.sessionStorage.removeItem(BEARER_STORAGE_KEY);
+      window.sessionStorage.removeItem(LEGACY_BEARER_STORAGE_KEY);
+    }
   } catch {
     // ignore storage restriction
   }
@@ -148,11 +176,11 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  if (!headers.has('X-Aurex-Device-Fp')) {
-    headers.set('X-Aurex-Device-Fp', getCachedDeviceFingerprint());
+  if (!headers.has('X-Nuvra-Device-Fp')) {
+    headers.set('X-Nuvra-Device-Fp', getCachedDeviceFingerprint());
   }
-  if (!headers.has('X-Aurex-Device-Label')) {
-    headers.set('X-Aurex-Device-Label', getDeviceLabel());
+  if (!headers.has('X-Nuvra-Device-Label')) {
+    headers.set('X-Nuvra-Device-Label', getDeviceLabel());
   }
   return fetch(input, { ...init, headers, credentials: 'same-origin' });
 }
@@ -298,7 +326,7 @@ export function useMarketSocket() {
     online: false,
     checking: true,
     latencyMs: null,
-    service: 'Aurex Authentication & Registration Server',
+    service: 'Nuvra Authentication & Registration Server',
     mode: 'embedded-express',
     invalidClientShieldActive: true,
     lastCheckedAt: Date.now(),
@@ -374,6 +402,21 @@ export function useMarketSocket() {
   const [gasEstimates, setGasEstimates] = useState<ChainGasEstimate[]>([]);
   const [custodyWallet, setCustodyWallet] = useState<CustodyWalletSnapshot | null>(null);
   const [vibeAudit, setVibeAudit] = useState<VibeSecurityAuditReport | null>(null);
+  const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
+  const [userLimits, setUserLimits] = useState<UserLimitRecord | null>(null);
+  const [userGrants, setUserGrants] = useState<UserFeatureGrants | null>(null);
+  const [reaLedger, setReaLedger] = useState<ReaLedgerSnapshot | null>(null);
+  const [topTierVerification, setTopTierVerification] = useState<TopTierVerificationBundle | null>(null);
+  const [coinLaunches, setCoinLaunches] = useState<CoinLaunchSubmission[]>([]);
+  const [chartAnalytics, setChartAnalytics] = useState<BackendChartAnalytics | null>(null);
+  const [ipIntel, setIpIntel] = useState<IpIntelLookupResult | null>(null);
+  const [marketSessions, setMarketSessions] = useState<MarketSessionCalendarItem[]>([]);
+  const [ipRules, setIpRules] = useState<IpRateLimitRule[]>([]);
+  const [ipEvents, setIpEvents] = useState<IpRateLimitEvent[]>([]);
+  const [pendingVerifications, setPendingVerifications] = useState<Array<TopTierVerificationBundle & { email: string }>>([]);
+  const [gmailStatus, setGmailStatus] = useState<{ connected: boolean; email: string | null }>(() =>
+    getGmailConnectionStatus()
+  );
   const [toasts, setToasts] = useState<AlertToast[]>([]);
 
   const pushToast = useCallback((toast: Omit<AlertToast, 'id' | 'createdAt'>) => {
@@ -449,7 +492,7 @@ export function useMarketSocket() {
         online: true,
         checking: false,
         latencyMs,
-        service: res.data.service ?? 'Aurex Auth & GitHub OAuth Server',
+        service: res.data.service ?? 'Nuvra Auth & GitHub OAuth Server',
         mode: res.data.mode ?? 'embedded-express',
         invalidClientShieldActive: res.data.oauth?.invalidClientShieldActive ?? true,
         privateGitHubSignInAvailable: res.data.privateGitHubSignInAvailable,
@@ -464,7 +507,7 @@ export function useMarketSocket() {
       online: false,
       checking: false,
       latencyMs: null,
-      service: 'Aurex Authentication Server',
+      service: 'Nuvra Authentication Server',
       mode: 'embedded-express',
       invalidClientShieldActive: true,
       lastCheckedAt: Date.now(),
@@ -876,6 +919,7 @@ export function useMarketSocket() {
             if (p.rewardsState) setRewardsState(p.rewardsState);
             if (p.socialGraph) setSocialGraph(p.socialGraph);
             if (p.bots) setBots(p.bots);
+            if (Array.isArray(p.notifications)) setNotifications(p.notifications);
             setLoading(false);
           } else if (msg.type === 'market:batch') {
             setInstruments(msg.payload.instruments);
@@ -988,6 +1032,8 @@ export function useMarketSocket() {
                   }
                 : prev
             );
+          } else if (msg.type === 'notifications:update') {
+            setNotifications(msg.payload);
           } else if (msg.type === 'error') {
             pushToast({
               title: 'Order Engine Notice',
@@ -1422,7 +1468,7 @@ export function useMarketSocket() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Aurex-Envelope': envelopeHeader,
+            'X-Nuvra-Envelope': envelopeHeader,
           },
           body: JSON.stringify(payload),
         });
@@ -1465,7 +1511,7 @@ export function useMarketSocket() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Aurex-Envelope': envelopeHeader,
+            'X-Nuvra-Envelope': envelopeHeader,
           },
           body: JSON.stringify(payload),
         });
@@ -1742,6 +1788,13 @@ export function useMarketSocket() {
     setPositions([]);
     setBankAccounts([]);
     setVaultTransfers([]);
+    setNotifications([]);
+    setUserLimits(null);
+    setUserGrants(null);
+    setTopTierVerification(null);
+    setIpRules([]);
+    setIpEvents([]);
+    setPendingVerifications([]);
   }, []);
 
   const refreshSessions = useCallback(async () => {
@@ -2111,7 +2164,7 @@ export function useMarketSocket() {
             void syncFirebaseUserProfile({
               uid: cred.user.uid,
               email: cred.user.email ?? '',
-              displayName: cred.user.displayName ?? 'Aurex Trader',
+              displayName: cred.user.displayName ?? 'Nuvra Trader',
             }).catch(() => {});
           }
 
@@ -2180,7 +2233,7 @@ export function useMarketSocket() {
 
         const popup = window.open(
           data.url,
-          `meridian_oauth_${provider}`,
+          `nuvra_oauth_${provider}`,
           'width=560,height=680,menubar=no,toolbar=no'
         );
         if (!popup) {
@@ -2651,7 +2704,7 @@ export function useMarketSocket() {
           if ((data.bonusAwardedUsd ?? 0) > 0) {
             pushToast({
               title: 'Referral Share Bonus Credited',
-              detail: `+$${data.bonusAwardedUsd?.toLocaleString()} Demo bonus added for sharing Aurex.`,
+              detail: `+$${data.bonusAwardedUsd?.toLocaleString()} Demo bonus added for sharing Nuvra.`,
               tone: 'positive',
             });
           }
@@ -2716,7 +2769,7 @@ export function useMarketSocket() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Aurex-Envelope': envelopeHeader,
+            'X-Nuvra-Envelope': envelopeHeader,
           },
           body: JSON.stringify(payload),
         });
@@ -2874,7 +2927,7 @@ export function useMarketSocket() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Aurex-Envelope': envelopeHeader,
+            'X-Nuvra-Envelope': envelopeHeader,
           },
           body: JSON.stringify(body),
         });
@@ -3552,7 +3605,7 @@ export function useMarketSocket() {
         if (!res.ok) return false;
         if (data.features) setExchangeFeatures(data.features);
         pushToast({
-          title: frozen ? 'Aurex Card Frozen' : 'Aurex Card Unfrozen',
+          title: frozen ? 'Nuvra Card Frozen' : 'Nuvra Card Unfrozen',
           detail: frozen
             ? 'All card authorizations are now blocked immediately.'
             : 'Merchant spend & cashback rewards re-enabled.',
@@ -4041,13 +4094,722 @@ export function useMarketSocket() {
     []
   );
 
+  const requestPasswordReset = useCallback(
+    async (
+      email: string
+    ): Promise<{ ok: boolean; message: string; sandboxResetCode?: string; mfaRequired?: boolean }> => {
+      try {
+        const res = await fetch('/api/v1/auth/forgot-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          message?: string;
+          sandboxResetCode?: string;
+          mfaRequired?: boolean;
+          error?: string;
+        };
+        if (!res.ok) {
+          return { ok: false, message: data.error ?? 'Unable to dispatch recovery instructions.' };
+        }
+        return {
+          ok: true,
+          message:
+            data.message ??
+            'If an account matches this email, recovery instructions have been issued.',
+          sandboxResetCode: data.sandboxResetCode,
+          mfaRequired: data.mfaRequired,
+        };
+      } catch {
+        return { ok: false, message: 'Network error contacting password recovery service.' };
+      }
+    },
+    []
+  );
+
+  const confirmPasswordReset = useCallback(
+    async (payload: {
+      email: string;
+      code: string;
+      newPassword: string;
+      totpCode?: string;
+    }): Promise<{ ok: boolean; error?: string; revokedSessions?: number }> => {
+      try {
+        const res = await fetch('/api/v1/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          revokedSessions?: number;
+          error?: string;
+        };
+        if (!res.ok || !data.ok) {
+          return { ok: false, error: data.error ?? 'Unable to verify recovery code.' };
+        }
+        pushToast({
+          title: 'Password Updated & Sessions Reset',
+          detail: `${data.revokedSessions ?? 0} prior session(s) revoked. Sign in with your new credentials.`,
+          tone: 'positive',
+        });
+        return { ok: true, revokedSessions: data.revokedSessions };
+      } catch {
+        return { ok: false, error: 'Network error completing password reset.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const fetchMyLimitsAndGrants = useCallback(async () => {
+    try {
+      const [limRes, grRes] = await Promise.all([
+        authFetch('/api/v1/limits/me'),
+        authFetch('/api/v1/grants/me'),
+      ]);
+      if (limRes.ok) {
+        const d = (await limRes.json()) as { limits?: UserLimitRecord };
+        if (d.limits) setUserLimits(d.limits);
+      }
+      if (grRes.ok) {
+        const d = (await grRes.json()) as { grants?: UserFeatureGrants };
+        if (d.grants) setUserGrants(d.grants);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchReaLedger = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/rea/ledger');
+      if (!res.ok) return;
+      const data = (await res.json()) as { ledger?: ReaLedgerSnapshot };
+      if (data.ledger) setReaLedger(data.ledger);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchTopTierVerification = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/verifications/me');
+      if (!res.ok) return;
+      const data = (await res.json()) as { bundle?: TopTierVerificationBundle };
+      if (data.bundle) setTopTierVerification(data.bundle);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const submitProfileStep = useCallback(
+    async (payload: {
+      fullName: string;
+      country: string;
+    }): Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/verifications/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as { bundle?: TopTierVerificationBundle; error?: string };
+        if (!res.ok || !data.bundle) {
+          return { ok: false, error: data.error ?? 'Profile verification failed.' };
+        }
+        setTopTierVerification(data.bundle);
+        void syncVerificationStatusToFirestore({
+          profileVerified: data.bundle.profileVerified,
+          documentStatus: data.bundle.documentStatus,
+          bankVerificationStatus: data.bundle.bankVerificationStatus,
+          overallTier: data.bundle.overallTier,
+        }).catch(() => {});
+        pushToast({
+          title: 'Stage 1 Profile Verified',
+          detail: `${data.bundle.profileFullName} (${data.bundle.profileCountry}) saved.`,
+          tone: 'positive',
+        });
+        return { ok: true, bundle: data.bundle };
+      } catch {
+        return { ok: false, error: 'Network error submitting profile verification.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const submitDocumentStep = useCallback(
+    async (payload: {
+      docType: KycDocumentType;
+      docNumber: string;
+      livenessSelfieConfirmed: boolean;
+    }): Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/verifications/document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as { bundle?: TopTierVerificationBundle; error?: string };
+        if (!res.ok || !data.bundle) {
+          pushToast({
+            title: 'Document Verification Notice',
+            detail: data.error ?? 'Invalid document or missing liveness confirmation.',
+            tone: 'negative',
+          });
+          return { ok: false, error: data.error };
+        }
+        setTopTierVerification(data.bundle);
+        void syncVerificationStatusToFirestore({
+          profileVerified: data.bundle.profileVerified,
+          documentStatus: data.bundle.documentStatus,
+          bankVerificationStatus: data.bundle.bankVerificationStatus,
+          overallTier: data.bundle.overallTier,
+        }).catch(() => {});
+        pushToast({
+          title: 'Stage 2 Document & Liveness Verified',
+          detail: `${data.bundle.documentType} (${data.bundle.maskedDocument}) cleared checksum.`,
+          tone: 'positive',
+        });
+        return { ok: true, bundle: data.bundle };
+      } catch {
+        return { ok: false, error: 'Network error submitting document check.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const initiateBankMicroDepositStep = useCallback(
+    async (payload: {
+      bankName: string;
+      accountNumber: string;
+    }): Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/verifications/bank/initiate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as { bundle?: TopTierVerificationBundle; error?: string };
+        if (!res.ok || !data.bundle) {
+          return { ok: false, error: data.error ?? 'Unable to dispatch micro-deposits.' };
+        }
+        setTopTierVerification(data.bundle);
+        void syncVerificationStatusToFirestore({
+          profileVerified: data.bundle.profileVerified,
+          documentStatus: data.bundle.documentStatus,
+          bankVerificationStatus: data.bundle.bankVerificationStatus,
+          overallTier: data.bundle.overallTier,
+        }).catch(() => {});
+        pushToast({
+          title: 'Bank Penny-Drop Initiated',
+          detail: `Two micro-deposits queued to ${data.bundle.bankName} (${data.bundle.bankMaskedAcct}).`,
+          tone: 'info',
+        });
+        return { ok: true, bundle: data.bundle };
+      } catch {
+        return { ok: false, error: 'Network error initiating bank micro-deposit.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const verifyBankMicroDepositStep = useCallback(
+    async (payload: {
+      deposit1Cents: number;
+      deposit2Cents: number;
+    }): Promise<{ ok: boolean; bundle?: TopTierVerificationBundle; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/verifications/bank/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as { bundle?: TopTierVerificationBundle; error?: string };
+        if (!res.ok || !data.bundle) {
+          pushToast({
+            title: 'Micro-Deposit Mismatch',
+            detail: data.error ?? 'Amounts did not match penny-drop test.',
+            tone: 'negative',
+          });
+          return { ok: false, error: data.error };
+        }
+        setTopTierVerification(data.bundle);
+        void syncVerificationStatusToFirestore({
+          profileVerified: data.bundle.profileVerified,
+          documentStatus: data.bundle.documentStatus,
+          bankVerificationStatus: data.bundle.bankVerificationStatus,
+          overallTier: data.bundle.overallTier,
+        }).catch(() => {});
+        pushToast({
+          title: 'Tier 3 Full Bank & Custody Verified',
+          detail: `${data.bundle.bankName} settled and linked for live rails.`,
+          tone: 'positive',
+        });
+        return { ok: true, bundle: data.bundle };
+      } catch {
+        return { ok: false, error: 'Network error confirming bank micro-deposits.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const fetchCoinLaunches = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/launchpad/coins');
+      if (!res.ok) return;
+      const data = (await res.json()) as { launches?: CoinLaunchSubmission[] };
+      if (Array.isArray(data.launches)) setCoinLaunches(data.launches);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const submitCoinLaunchProposal = useCallback(
+    async (payload: {
+      name: string;
+      symbol: string;
+      chain: CoinLaunchSubmission['chain'];
+      contractAddress: string;
+      initialPriceUsd: number;
+      totalSupply: number;
+      whitepaperSummary: string;
+    }): Promise<{ ok: boolean; submission?: CoinLaunchSubmission; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/launchpad/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          submission?: CoinLaunchSubmission;
+          launches?: CoinLaunchSubmission[];
+          error?: string;
+        };
+        if (Array.isArray(data.launches)) setCoinLaunches(data.launches);
+        if (!res.ok || !data.submission) {
+          pushToast({
+            title: 'Coin Launch Rejected',
+            detail: data.error ?? 'Check ticker uniqueness, authorization, or contract scan.',
+            tone: 'negative',
+          });
+          return { ok: false, error: data.error };
+        }
+        void syncCoinLaunchToFirestore({
+          id: data.submission.id,
+          symbol: data.submission.symbol,
+          name: data.submission.name,
+          chain: data.submission.chain === 'TRX' ? 'ETH' : data.submission.chain,
+          status: data.submission.status,
+        }).catch(() => {});
+        pushToast({
+          title: `Coin Launch Submitted · ${data.submission.symbol}`,
+          detail: 'Queued for Founder Admin approval & REA TOKEN_MINT listing.',
+          tone: 'positive',
+        });
+        return { ok: true, submission: data.submission };
+      } catch {
+        return { ok: false, error: 'Network error submitting coin launch proposal.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const fetchBackendChartAnalytics = useCallback(
+    async (symbol: string, timeframe: ChartTimeframe = '1m'): Promise<BackendChartAnalytics | null> => {
+      try {
+        const res = await authFetch(
+          `/api/v1/markets/analytics/${encodeURIComponent(symbol)}?timeframe=${encodeURIComponent(timeframe)}`
+        );
+        if (!res.ok) return null;
+        const data = (await res.json()) as { analytics?: BackendChartAnalytics };
+        if (data.analytics) {
+          setChartAnalytics(data.analytics);
+          return data.analytics;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+    []
+  );
+
+  const lookupIpIntel = useCallback(async (ip?: string): Promise<IpIntelLookupResult | null> => {
+    try {
+      const qs = ip?.trim() ? `?ip=${encodeURIComponent(ip.trim())}` : '';
+      const res = await authFetch(`/api/v1/public-apis/ip-intel${qs}`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { intel?: IpIntelLookupResult };
+      if (data.intel) {
+        setIpIntel(data.intel);
+        return data.intel;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const fetchMarketSessions = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/public-apis/market-sessions');
+      if (!res.ok) return;
+      const data = (await res.json()) as { sessions?: MarketSessionCalendarItem[] };
+      if (Array.isArray(data.sessions)) setMarketSessions(data.sessions);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/notifications');
+      if (!res.ok) return;
+      const data = (await res.json()) as { notifications?: PlatformNotification[] };
+      if (Array.isArray(data.notifications)) setNotifications(data.notifications);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const markNotificationRead = useCallback(async (notificationId: string) => {
+    try {
+      const res = await authFetch(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
+        method: 'POST',
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        item?: PlatformNotification;
+        notifications?: PlatformNotification[];
+      };
+      if (Array.isArray(data.notifications)) setNotifications(data.notifications);
+      if (data.item) {
+        void syncNotificationToFirestore({
+          id: data.item.id,
+          category: data.item.category,
+          severity: data.item.severity,
+          title: data.item.title,
+          message: data.item.message,
+          read: true,
+        }).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const connectAdminGmail = useCallback(async (): Promise<{ ok: boolean; email?: string; error?: string }> => {
+    const res = await connectAdminGmailAlerts();
+    setGmailStatus(getGmailConnectionStatus());
+    if (res.ok) {
+      pushToast({
+        title: 'Gmail Alert Channel Connected',
+        detail: `Ready to dispatch confirmed admin alerts from ${res.email ?? 'Google Account'}.`,
+        tone: 'positive',
+      });
+    } else if (res.error) {
+      pushToast({
+        title: 'Gmail Connection Notice',
+        detail: res.error,
+        tone: 'negative',
+      });
+    }
+    return res;
+  }, [pushToast]);
+
+  const disconnectAdminGmail = useCallback(() => {
+    disconnectAdminGmailAlerts();
+    setGmailStatus(getGmailConnectionStatus());
+    pushToast({
+      title: 'Gmail Alert Channel Disconnected',
+      detail: 'Session-scoped Gmail token cleared from memory.',
+      tone: 'info',
+    });
+  }, [pushToast]);
+
+  const dispatchAdminGmailAlert = useCallback(
+    async (
+      notification: PlatformNotification,
+      toEmail = 'vemulavankeswararao@gmail.com'
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const emailRes = await sendAdminAlertViaGmail({
+        toEmail,
+        subject: `[Nuvra ${notification.severity}] ${notification.title}`,
+        bodyText: `${notification.title}\n\nCategory: ${notification.category}\nSeverity: ${notification.severity}\nTimestamp: ${new Date(notification.createdAt).toISOString()}\n\n${notification.message}`,
+      });
+      if (!emailRes.ok) {
+        pushToast({
+          title: 'Gmail Alert Not Sent',
+          detail: emailRes.error ?? 'Connect Gmail first to send alerts.',
+          tone: 'negative',
+        });
+        return { ok: false, error: emailRes.error };
+      }
+      const markRes = await authFetch(
+        `/api/v1/notifications/${encodeURIComponent(notification.id)}/gmail-dispatched`,
+        { method: 'POST' }
+      );
+      if (markRes.ok) {
+        const data = (await markRes.json()) as { notifications?: PlatformNotification[] };
+        if (Array.isArray(data.notifications)) setNotifications(data.notifications);
+      }
+      pushToast({
+        title: 'Admin Alert Sent via Gmail',
+        detail: `Dispatched to ${toEmail} (ID: ${emailRes.messageId ?? 'ok'}).`,
+        tone: 'positive',
+      });
+      return { ok: true };
+    },
+    [pushToast]
+  );
+
+  const updateAdminUserLimits = useCallback(
+    async (
+      userId: string,
+      patch: Partial<
+        Pick<
+          UserLimitRecord,
+          | 'tierCode'
+          | 'dailyDepositLimitUsd'
+          | 'dailyWithdrawalLimitUsd'
+          | 'singleOrderMaxUsd'
+          | 'maxOpenPositions'
+          | 'maxLeverageX'
+          | 'apiCallsPerMin'
+        >
+      >
+    ): Promise<{ ok: boolean; limits?: UserLimitRecord; error?: string }> => {
+      try {
+        const res = await authFetch(`/api/v1/admin/limits/${encodeURIComponent(userId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const data = (await res.json()) as { limits?: UserLimitRecord; error?: string };
+        if (!res.ok || !data.limits) {
+          return { ok: false, error: data.error ?? 'Unable to update user limits.' };
+        }
+        if (authUser?.id === userId) setUserLimits(data.limits);
+        pushToast({
+          title: `User Limits Updated · ${data.limits.tierCode}`,
+          detail: `Single order max $${data.limits.singleOrderMaxUsd.toLocaleString()} · Daily wd $${data.limits.dailyWithdrawalLimitUsd.toLocaleString()}`,
+          tone: 'positive',
+        });
+        return { ok: true, limits: data.limits };
+      } catch {
+        return { ok: false, error: 'Network error updating user limits.' };
+      }
+    },
+    [authUser?.id, pushToast]
+  );
+
+  const updateAdminUserGrants = useCallback(
+    async (
+      userId: string,
+      patch: Partial<
+        Pick<
+          UserFeatureGrants,
+          | 'canTradeRealMoney'
+          | 'canCreateApiKeys'
+          | 'canLaunchTokens'
+          | 'canBypassVelocity'
+          | 'canExportAudit'
+        >
+      >
+    ): Promise<{ ok: boolean; grants?: UserFeatureGrants; error?: string }> => {
+      try {
+        const res = await authFetch(`/api/v1/admin/grants/${encodeURIComponent(userId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const data = (await res.json()) as { grants?: UserFeatureGrants; error?: string };
+        if (!res.ok || !data.grants) {
+          return { ok: false, error: data.error ?? 'Unable to update user capability grants.' };
+        }
+        if (authUser?.id === userId) setUserGrants(data.grants);
+        pushToast({
+          title: '1-Click Capability Grants Updated',
+          detail: `RealTrade:${data.grants.canTradeRealMoney ? 'ON' : 'OFF'} · Keys:${data.grants.canCreateApiKeys ? 'ON' : 'OFF'} · Launchpad:${data.grants.canLaunchTokens ? 'ON' : 'OFF'}`,
+          tone: 'positive',
+        });
+        return { ok: true, grants: data.grants };
+      } catch {
+        return { ok: false, error: 'Network error updating feature grants.' };
+      }
+    },
+    [authUser?.id, pushToast]
+  );
+
+  const fetchAdminIpRulesAndEvents = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/admin/ip-rules');
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        rules?: IpRateLimitRule[];
+        events?: IpRateLimitEvent[];
+      };
+      if (Array.isArray(data.rules)) setIpRules(data.rules);
+      if (Array.isArray(data.events)) setIpEvents(data.events);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const upsertAdminIpRule = useCallback(
+    async (payload: {
+      ipPattern: string;
+      maxRequestsPerMin: number;
+      burstAllowance?: number;
+      status?: 'ACTIVE' | 'THROTTLED' | 'BLOCKED';
+      reason?: string;
+    }): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await authFetch('/api/v1/admin/ip-rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          rules?: IpRateLimitRule[];
+          events?: IpRateLimitEvent[];
+          error?: string;
+        };
+        if (Array.isArray(data.rules)) setIpRules(data.rules);
+        if (Array.isArray(data.events)) setIpEvents(data.events);
+        if (!res.ok) return { ok: false, error: data.error ?? 'Unable to update IP rate limit rule.' };
+        pushToast({
+          title: 'IP Edge Guard Updated',
+          detail: `${payload.ipPattern} · ${payload.maxRequestsPerMin} req/min (${payload.status ?? 'ACTIVE'})`,
+          tone: 'positive',
+        });
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error saving IP rule.' };
+      }
+    },
+    [pushToast]
+  );
+
+  const unblockAdminIpRule = useCallback(
+    async (ruleId: string): Promise<boolean> => {
+      try {
+        const res = await authFetch(`/api/v1/admin/ip-rules/${encodeURIComponent(ruleId)}/unblock`, {
+          method: 'POST',
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as {
+          rules?: IpRateLimitRule[];
+          events?: IpRateLimitEvent[];
+        };
+        if (Array.isArray(data.rules)) setIpRules(data.rules);
+        if (Array.isArray(data.events)) setIpEvents(data.events);
+        pushToast({
+          title: 'IP Rule Unblocked',
+          detail: 'Rate limit bucket reset and edge rule restored to ACTIVE.',
+          tone: 'positive',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [pushToast]
+  );
+
+  const fetchAdminPendingVerifications = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/admin/verifications/pending');
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        verifications?: Array<TopTierVerificationBundle & { email: string }>;
+      };
+      if (Array.isArray(data.verifications)) setPendingVerifications(data.verifications);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const reviewAdminVerification = useCallback(
+    async (userId: string, decision: 'APPROVE' | 'REJECT', note = ''): Promise<boolean> => {
+      try {
+        const res = await authFetch(`/api/v1/admin/verifications/${encodeURIComponent(userId)}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision, note }),
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as {
+          bundle?: TopTierVerificationBundle;
+          verifications?: Array<TopTierVerificationBundle & { email: string }>;
+        };
+        if (Array.isArray(data.verifications)) setPendingVerifications(data.verifications);
+        if (data.bundle && authUser?.id === userId) setTopTierVerification(data.bundle);
+        pushToast({
+          title: `Verification ${decision === 'APPROVE' ? 'Approved' : 'Rejected'}`,
+          detail: `Updated KYC & Bank Custody status for user ${userId}.`,
+          tone: decision === 'APPROVE' ? 'positive' : 'info',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [authUser?.id, pushToast]
+  );
+
+  const reviewAdminCoinLaunch = useCallback(
+    async (launchId: string, decision: 'APPROVE' | 'REJECT', note = ''): Promise<boolean> => {
+      try {
+        const res = await authFetch(`/api/v1/admin/launchpad/${encodeURIComponent(launchId)}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision, note }),
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as {
+          submission?: CoinLaunchSubmission;
+          launches?: CoinLaunchSubmission[];
+        };
+        if (Array.isArray(data.launches)) setCoinLaunches(data.launches);
+        if (decision === 'APPROVE') {
+          void fetchReaLedger();
+        }
+        pushToast({
+          title: `Coin Launch ${decision === 'APPROVE' ? 'Approved & Listed Live' : 'Rejected'}`,
+          detail: data.submission
+            ? `${data.submission.symbol} (${data.submission.chain}) updated with REA mint audit.`
+            : 'Launchpad review recorded.',
+          tone: decision === 'APPROVE' ? 'positive' : 'info',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [fetchReaLedger, pushToast]
+  );
+
   useEffect(() => {
     void refreshPublicApisHub();
+    void fetchMarketSessions();
+    void fetchCoinLaunches();
     if (!authUser) {
       setCustodyWallet(null);
+      setUserLimits(null);
+      setUserGrants(null);
+      setTopTierVerification(null);
+      setNotifications([]);
       return;
     }
+    setGmailStatus(getGmailConnectionStatus());
     void refreshCustodyWallet();
+    void fetchMyLimitsAndGrants();
+    void fetchTopTierVerification();
+    void fetchNotifications();
+    void fetchReaLedger();
     void authFetch('/api/v1/security/vibe-audit')
       .then(async (r) => {
         if (!r.ok) return;
@@ -4055,7 +4817,27 @@ export function useMarketSocket() {
         if (d.report) setVibeAudit(d.report);
       })
       .catch(() => {});
-  }, [authUser, refreshCustodyWallet, refreshPublicApisHub]);
+    if (authUser.isAdmin) {
+      void fetchAdminIpRulesAndEvents();
+      void fetchAdminPendingVerifications();
+    }
+  }, [
+    authUser,
+    fetchAdminIpRulesAndEvents,
+    fetchAdminPendingVerifications,
+    fetchCoinLaunches,
+    fetchMarketSessions,
+    fetchMyLimitsAndGrants,
+    fetchNotifications,
+    fetchReaLedger,
+    fetchTopTierVerification,
+    refreshCustodyWallet,
+    refreshPublicApisHub,
+  ]);
+
+  useEffect(() => {
+    void fetchBackendChartAnalytics(activeSymbol, activeTimeframe);
+  }, [activeSymbol, activeTimeframe, fetchBackendChartAnalytics]);
 
   return {
     connected,
@@ -4241,5 +5023,45 @@ export function useMarketSocket() {
     executeGuardedWithdrawal,
     runVibeAudit,
     runGeminiEnterpriseAnalysis,
+    notifications,
+    userLimits,
+    userGrants,
+    reaLedger,
+    topTierVerification,
+    coinLaunches,
+    chartAnalytics,
+    ipIntel,
+    marketSessions,
+    ipRules,
+    ipEvents,
+    pendingVerifications,
+    gmailStatus,
+    requestPasswordReset,
+    confirmPasswordReset,
+    fetchMyLimitsAndGrants,
+    fetchReaLedger,
+    fetchTopTierVerification,
+    submitProfileStep,
+    submitDocumentStep,
+    initiateBankMicroDepositStep,
+    verifyBankMicroDepositStep,
+    fetchCoinLaunches,
+    submitCoinLaunchProposal,
+    fetchBackendChartAnalytics,
+    lookupIpIntel,
+    fetchMarketSessions,
+    fetchNotifications,
+    markNotificationRead,
+    connectAdminGmail,
+    disconnectAdminGmail,
+    dispatchAdminGmailAlert,
+    updateAdminUserLimits,
+    updateAdminUserGrants,
+    fetchAdminIpRulesAndEvents,
+    upsertAdminIpRule,
+    unblockAdminIpRule,
+    fetchAdminPendingVerifications,
+    reviewAdminVerification,
+    reviewAdminCoinLaunch,
   };
 }

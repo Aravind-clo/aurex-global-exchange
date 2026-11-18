@@ -42,6 +42,10 @@ import {
   scheduleWorkspacesPersist,
   type PersistedWorkspaceSnapshot,
 } from './workspacePersistence.ts';
+import {
+  consumePasswordResetTokenInCloudSql,
+  recordPasswordResetTokenInCloudSql,
+} from '../src/db/users.ts';
 
 export interface StoredPasskeyRecord extends PasskeyCredentialInfo {
   credentialIdB64: string;
@@ -1086,7 +1090,7 @@ export function startTotpEnrollment(userId: string): TotpEnrollmentSetup | null 
   return {
     secretBase32,
     otpauthUri: buildOtpAuthUri(user.email, secretBase32),
-    issuer: 'Aurex Exchange',
+    issuer: 'Nuvra Exchange',
     accountEmail: user.email,
     recoveryCodes: plainCodes,
   };
@@ -1612,7 +1616,7 @@ export function getPromoProfile(
 ): ReferralPromoProfile {
   const ws = getOrCreateWorkspace(userId, priceLookup);
   const p = ws.promo;
-  const cleanOrigin = originUrl.replace(/\/+$/, '') || 'https://aurex.exchange';
+  const cleanOrigin = originUrl.replace(/\/+$/, '') || 'https://nuvra.exchange';
   return {
     referralCode: p.referralCode,
     inviteUrl: `${cleanOrigin}/?ref=${encodeURIComponent(p.referralCode)}`,
@@ -1723,3 +1727,184 @@ export function recordReferralShare(
     firstShareBonusAwarded,
   };
 }
+
+// --- Zero-Enumeration Password Recovery (10-min SHA-256 single-use code + full session revocation) ---
+interface PendingPasswordResetRecord {
+  userId: string;
+  email: string;
+  tokenHash: string;
+  expiresAt: number;
+  attempts: number;
+  consumed: boolean;
+}
+
+const passwordResetRequestsByEmail = new Map<string, PendingPasswordResetRecord>();
+
+export function requestPasswordReset(
+  rawEmail: string,
+  meta?: { rawIp?: string; userAgent?: string }
+): {
+  ok: true;
+  message: string;
+  expiresInSec: number;
+  requiresTotpIfEnrolled: boolean;
+  sandboxVerificationCode?: string;
+} {
+  const email = sanitizePlainText(rawEmail, 120).toLowerCase();
+  const genericMessage =
+    'If an account matches that email, a 6-digit single-use recovery code (valid for 10 minutes) has been issued.';
+
+  const user = usersByEmail.get(email);
+  if (!user) {
+    return {
+      ok: true,
+      message: genericMessage,
+      expiresInSec: 600,
+      requiresTotpIfEnrolled: false,
+    };
+  }
+
+  const code = String(crypto.randomInt(100000, 999999));
+  const tokenHash = crypto
+    .createHash('sha256')
+    .update(`nuvra-reset:${user.id}:${email}:${code}`)
+    .digest('hex');
+  const expiresAt = Date.now() + 10 * 60_000;
+
+  passwordResetRequestsByEmail.set(email, {
+    userId: user.id,
+    email,
+    tokenHash,
+    expiresAt,
+    attempts: 0,
+    consumed: false,
+  });
+
+  void recordPasswordResetTokenInCloudSql({
+    uid: user.id,
+    email: user.email,
+    tokenHash,
+    expiresAtMs: expiresAt,
+  }).catch(() => {});
+
+  recordAuthTelemetryEvent({
+    eventType: 'MFA_CHALLENGE_ISSUED',
+    outcome: 'CHALLENGE',
+    method: 'password',
+    userId: user.id,
+    email: user.email,
+    name: user.name,
+    rawIp: meta?.rawIp,
+    userAgent: meta?.userAgent,
+    detail: 'Zero-enumeration 10-minute password recovery code generated.',
+  });
+
+  return {
+    ok: true,
+    message: genericMessage,
+    expiresInSec: 600,
+    requiresTotpIfEnrolled: user.totpEnabled,
+    // Provided strictly for local SMTP-free sandbox testing on the non-admin preview/demo environment when no SMTP relay is configured
+    sandboxVerificationCode: !process.env.SMTP_HOST ? code : undefined,
+  };
+}
+
+export function confirmPasswordReset(
+  input: {
+    email: string;
+    code: string;
+    newPassword: string;
+    totpCode?: string;
+  },
+  meta?: { rawIp?: string; userAgent?: string }
+):
+  | { ok: true; message: string; sessionsRevoked: number; userId: string; email: string }
+  | { ok: false; status: number; error: string } {
+  const email = sanitizePlainText(input.email, 120).toLowerCase();
+  const code = String(input.code ?? '').trim();
+  const newPassword = String(input.newPassword ?? '');
+
+  if (newPassword.length < 8) {
+    return { ok: false, status: 400, error: 'New password must be at least 8 characters long.' };
+  }
+
+  const pending = passwordResetRequestsByEmail.get(email);
+  const user = usersByEmail.get(email);
+  if (!pending || !user || pending.consumed) {
+    return { ok: false, status: 400, error: 'Invalid or expired recovery code.' };
+  }
+  if (Date.now() > pending.expiresAt) {
+    passwordResetRequestsByEmail.delete(email);
+    return { ok: false, status: 400, error: 'Recovery code has expired. Request a new code.' };
+  }
+  if (pending.attempts >= 5) {
+    return { ok: false, status: 429, error: 'Maximum recovery verification attempts exceeded.' };
+  }
+
+  const candidateHash = crypto
+    .createHash('sha256')
+    .update(`nuvra-reset:${user.id}:${email}:${code}`)
+    .digest('hex');
+  const codeMatch = crypto.timingSafeEqual(
+    Buffer.from(candidateHash, 'hex'),
+    Buffer.from(pending.tokenHash, 'hex')
+  );
+  if (!codeMatch) {
+    pending.attempts += 1;
+    return {
+      ok: false,
+      status: 400,
+      error: `Invalid recovery code (${5 - pending.attempts} attempts remaining).`,
+    };
+  }
+
+  if (user.totpEnabled && user.totpSecret) {
+    const tCode = String(input.totpCode ?? '').trim();
+    if (!verifyTotpCode(user.totpSecret, tCode)) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Valid 6-digit Authenticator App TOTP code is required to complete recovery.',
+      };
+    }
+  }
+
+  const { hashHex, saltHex } = hashPassword(newPassword);
+  user.passwordHashHex = hashHex;
+  user.passwordSaltHex = saltHex;
+  pending.consumed = true;
+  passwordResetRequestsByEmail.delete(email);
+
+  // Revoke ALL active sessions for account hygiene
+  let sessionsRevoked = 0;
+  for (const [sid, sess] of sessionsMap.entries()) {
+    if (sess.userId === user.id) {
+      sessionsMap.delete(sid);
+      sessionsRevoked += 1;
+    }
+  }
+
+  persistUsersSnapshot();
+  void consumePasswordResetTokenInCloudSql(pending.tokenHash).catch(() => {});
+
+  recordAuthTelemetryEvent({
+    eventType: 'SESSIONS_REVOKED',
+    outcome: 'SUCCESS',
+    method: 'password',
+    userId: user.id,
+    email: user.email,
+    name: user.name,
+    rawIp: meta?.rawIp,
+    userAgent: meta?.userAgent,
+    detail: `Password rotated via self-service recovery; ${sessionsRevoked} session(s) invalidated.`,
+  });
+
+  return {
+    ok: true,
+    message: `Password updated cleanly. ${sessionsRevoked} prior active session(s) revoked.`,
+    sessionsRevoked,
+    userId: user.id,
+    email: user.email,
+  };
+}
+

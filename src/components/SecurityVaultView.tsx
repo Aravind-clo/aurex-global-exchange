@@ -48,8 +48,11 @@ import type {
   ReferralPromoProfile,
   SecurityStatus,
   SupportedCurrency,
+  TopTierVerificationBundle,
   TotpEnrollmentSetup,
   TrustedDeviceRecord,
+  UserFeatureGrants,
+  UserLimitRecord,
   VaultTransferRecord,
 } from '../types/market';
 import { downloadCsv, formatCurrency, formatTimeShort } from '../utils/format';
@@ -71,7 +74,11 @@ interface SecurityVaultViewProps {
   promoProfile?: ReferralPromoProfile | null;
   bankDirectory?: GlobalBankDirectoryEntry[];
   kycVerified?: boolean;
+  userLimits?: UserLimitRecord | null;
+  userGrants?: UserFeatureGrants | null;
+  topTierVerification?: TopTierVerificationBundle | null;
   onOpenKyc?: () => void;
+  onOpenVerification?: () => void;
   guideMode?: boolean;
   onSwitchAccountMode: (mode: 'demo' | 'real') => Promise<{ ok: boolean; error?: string }>;
   onTransferVaultShield: (payload: {
@@ -216,7 +223,11 @@ export function SecurityVaultView({
   promoProfile = null,
   bankDirectory = [],
   kycVerified = false,
+  userLimits = null,
+  userGrants = null,
+  topTierVerification = null,
   onOpenKyc,
+  onOpenVerification,
   guideMode = false,
   onSwitchAccountMode,
   onTransferVaultShield,
@@ -508,7 +519,7 @@ export function SecurityVaultView({
 
   const handleExportVaultCsv = () => {
     downloadCsv(
-      `aurex-vault-ledger-${new Date().toISOString().slice(0, 10)}.csv`,
+      `nuvra-vault-ledger-${new Date().toISOString().slice(0, 10)}.csv`,
       vaultTransfers.map((tx) => ({
         id: tx.id,
         timestamp: new Date(tx.createdAt).toISOString(),
@@ -587,6 +598,57 @@ export function SecurityVaultView({
                 </>
               )}
             </button>
+          </div>
+        </div>
+
+        {/* Beginner/Expert Clarity & Separated Limits / Top-Tier Verification Strip */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 pt-1">
+          <div className="lg:col-span-7 p-3 rounded-md border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="space-y-0.5">
+              <div className="font-semibold text-slate-900 dark:text-[#EAECEF]">
+                {guideMode ? 'Beginner Guided Payments: 3 Clear Steps' : 'Isolated Account Tier Limits & Custody Grants'}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-[#848E9C]">
+                {guideMode
+                  ? '1) Link UPI or Bank Rail below · 2) Deposit to Real or Cold Vault · 3) Unlock Vault only with 2FA.'
+                  : userLimits
+                  ? `Tier ${userLimits.tierCode} · Daily Deposit ${formatCurrency(userLimits.dailyDepositLimitUsd)} · Daily Withdraw ${formatCurrency(userLimits.dailyWithdrawalLimitUsd)} · Max Order ${formatCurrency(userLimits.singleOrderMaxUsd)}`
+                  : 'Limits are stored in isolated governance tables and enforced before order or withdrawal settlement.'}
+              </div>
+            </div>
+            {userGrants && (
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
+                <span className={userGrants.canTradeRealMoney ? 'text-[#0ECB81]' : 'text-[#848E9C]'}>
+                  REAL:{userGrants.canTradeRealMoney ? 'ON' : 'OFF'}
+                </span>
+                <span className={userGrants.canCreateApiKeys ? 'text-[#0ECB81]' : 'text-[#848E9C]'}>
+                  API:{userGrants.canCreateApiKeys ? 'ON' : 'OFF'}
+                </span>
+                <span className={userGrants.canLaunchTokens ? 'text-[#0ECB81]' : 'text-[#848E9C]'}>
+                  LAUNCH:{userGrants.canLaunchTokens ? 'ON' : 'OFF'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="lg:col-span-5 p-3 rounded-md border border-slate-200 dark:border-[#2B3139] bg-slate-50/70 dark:bg-[#0B0E11]/70 flex items-center justify-between gap-3 text-xs">
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-900 dark:text-[#EAECEF] truncate">
+                Verification: {topTierVerification?.overallTier ?? (kycVerified ? 'Tier 2 Documented' : 'Unverified')}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-[#848E9C] truncate">
+                Stage 1 Profile · Stage 2 Liveness/ID · Stage 3 Bank Penny-Drop
+              </div>
+            </div>
+            {onOpenVerification && (
+              <button
+                type="button"
+                onClick={onOpenVerification}
+                className="px-2.5 py-1.5 text-[11px] font-semibold rounded bg-[#F0B90B] hover:bg-[#d9a70a] text-[#0B0E11] whitespace-nowrap shrink-0"
+              >
+                Open 3-Stage Verify
+              </button>
+            )}
           </div>
         </div>
 
@@ -1961,7 +2023,7 @@ export function SecurityVaultView({
               Responsible Disclosure SLAs &amp; Contact
             </div>
             <div className="font-mono text-[11px] text-[#0ECB81]">
-              security@aurexglobalexchange.com · founder@aurexglobalexchange.com
+              security@nuvra.exchange · founder@nuvra.exchange
             </div>
             <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
               <div className="flex justify-between px-2 py-1 rounded bg-white dark:bg-[#181A20] border border-slate-200 dark:border-[#2B3139]">

@@ -75,7 +75,7 @@ export function verifyTotpCode(secretBase32: string, candidateRaw: string): bool
 }
 
 export function buildOtpAuthUri(email: string, secretBase32: string): string {
-  const issuer = 'Meridian Markets';
+  const issuer = 'Nuvra Exchange';
   const label = encodeURIComponent(`${issuer}:${email}`);
   return `otpauth://totp/${label}?secret=${secretBase32}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }

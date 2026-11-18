@@ -30,7 +30,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
         className={`flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-600/10 hover:bg-blue-600/20 text-blue-600 dark:text-blue-400 font-semibold transition-colors whitespace-nowrap shrink-0 ${
           compact ? 'px-2.5 py-1.5 text-[11px] min-h-[36px]' : 'px-3 py-2 text-xs min-h-[40px]'
         }`}
-        title="Install Aurex Global Exchange on Android, iPhone, iPad, Windows, or MacBook"
+        title="Install Nuvra Exchange on Android, iPhone, iPad, Windows, or MacBook"
       >
         <Download className="w-3.5 h-3.5 shrink-0" />
         <span>{compact ? 'Install App' : 'Install App'}</span>
@@ -42,7 +42,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Install Aurex Global Exchange
+                  Install Nuvra Exchange
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   Standalone cross-platform execution client with offline cache and native passkey support.
@@ -125,7 +125,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
                 </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                   Click the install icon in the right side of the URL bar →{' '}
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">Install Aurex</span> to pin to Start & Taskbar.
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">Install Nuvra</span> to pin to Start & Taskbar.
                 </p>
               </div>
             </div>

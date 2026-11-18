@@ -174,7 +174,7 @@ function ensureExtras(
     ],
     cardProfile: {
       cardNumberMasked: '•••• 4829',
-      holderName: holderName || 'Aurex Member',
+      holderName: holderName || 'Nuvra Member',
       tier: 'Amber Sovereign',
       frozen: false,
       dailyLimitUsd: 15000,

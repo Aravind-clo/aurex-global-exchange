@@ -1,5 +1,11 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  type Auth,
+} from 'firebase/auth';
 import {
   deleteDoc,
   doc,
@@ -20,11 +26,31 @@ const resolvedApiKey =
 const app: FirebaseApp | null = resolvedApiKey
   ? initializeApp({ ...firebaseConfig, apiKey: resolvedApiKey })
   : null;
+const optionalDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
 export const db: Firestore | null = app
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  ? optionalDatabaseId
+    ? getFirestore(app, optionalDatabaseId)
+    : getFirestore(app)
   : null;
 export const auth: Auth | null = app ? getAuth(app) : null;
 export const googleAuthProvider = new GoogleAuthProvider();
+
+export const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.send'] as const;
+const gmailAlertProvider = new GoogleAuthProvider();
+gmailAlertProvider.addScope('https://www.googleapis.com/auth/gmail.send');
+
+// In-memory cache ONLY for Gmail OAuth access token (never stored in localStorage/sessionStorage)
+let cachedGmailAccessToken: string | null = null;
+let cachedGmailConnectedEmail: string | null = null;
+
+if (auth) {
+  onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      cachedGmailAccessToken = null;
+      cachedGmailConnectedEmail = null;
+    }
+  });
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -108,7 +134,7 @@ export async function syncFirebaseUserProfile(params: {
   try {
     const profileRef = doc(db, 'users', safeUid);
     const existing = await getDoc(profileRef);
-    const safeDisplayName = (params.displayName || 'Meridian Trader').slice(0, 80);
+    const safeDisplayName = (params.displayName || 'Nuvra Trader').slice(0, 80);
     const safeMarketFocus = (params.marketFocus || 'Global Multi-Asset').slice(0, 64);
     const safeExp = params.experienceMode === 'pro' ? 'pro' : 'newbie';
 
@@ -342,4 +368,211 @@ export async function syncSecurityAuditToFirestore(params: {
     handleFirestoreError(error, OperationType.CREATE, docPath);
   }
 }
+
+export async function syncNotificationToFirestore(params: {
+  id: string;
+  category: 'SECURITY_429' | 'VERIFICATION' | 'COIN_LAUNCH' | 'PASSWORD_RECOVERY' | 'TRADING' | 'LIMIT_BREACH';
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  title: string;
+  message: string;
+  read: boolean;
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeId = params.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  const safeTitle = (params.title || 'Platform Alert').slice(0, 120);
+  const safeMsg = (params.message || 'Security telemetry update').slice(0, 400);
+  if (!safeId || safeTitle.length < 2 || safeMsg.length < 2) return;
+  const docPath = `users/${safeUid}/notifications/${safeId}`;
+  try {
+    const ref = doc(db, 'users', safeUid, 'notifications', safeId);
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        category: params.category,
+        severity: params.severity,
+        title: safeTitle,
+        message: safeMsg,
+        read: Boolean(params.read),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(
+        ref,
+        {
+          read: Boolean(params.read),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export async function syncVerificationStatusToFirestore(params: {
+  profileVerified: boolean;
+  documentStatus: 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+  bankVerificationStatus: 'NOT_STARTED' | 'MICRO_DEPOSIT_SENT' | 'VERIFIED' | 'FAILED';
+  overallTier: string;
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const docPath = `users/${safeUid}/verifications/primary`;
+  const safeTier = (params.overallTier || 'Unverified').slice(0, 48);
+  if (safeTier.length < 4) return;
+  try {
+    const ref = doc(db, 'users', safeUid, 'verifications', 'primary');
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        profileVerified: Boolean(params.profileVerified),
+        documentStatus: params.documentStatus,
+        bankVerificationStatus: params.bankVerificationStatus,
+        overallTier: safeTier,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(
+        ref,
+        {
+          profileVerified: Boolean(params.profileVerified),
+          documentStatus: params.documentStatus,
+          bankVerificationStatus: params.bankVerificationStatus,
+          overallTier: safeTier,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export async function syncCoinLaunchToFirestore(params: {
+  id: string;
+  symbol: string;
+  name: string;
+  chain: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'ARB' | 'BASE' | 'TRX';
+  status: 'PENDING_REVIEW' | 'APPROVED_LISTED' | 'REJECTED';
+}): Promise<void> {
+  const safeUid = resolveVerifiedFirebaseOwner();
+  if (!db || !safeUid) return;
+  const safeId = params.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+  const safeSym = params.symbol.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 16);
+  const safeName = (params.name || safeSym).slice(0, 64);
+  if (!safeId || safeSym.length < 2 || safeName.length < 2) return;
+  const docPath = `users/${safeUid}/coinLaunches/${safeId}`;
+  try {
+    const ref = doc(db, 'users', safeUid, 'coinLaunches', safeId);
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        symbol: safeSym,
+        name: safeName,
+        chain: params.chain,
+        status: params.status,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export function getGmailConnectionStatus(): { connected: boolean; email: string | null } {
+  return {
+    connected: Boolean(cachedGmailAccessToken),
+    email: cachedGmailConnectedEmail,
+  };
+}
+
+export async function connectAdminGmailAlerts(): Promise<{
+  ok: boolean;
+  email?: string;
+  error?: string;
+}> {
+  if (!auth) {
+    return { ok: false, error: 'Firebase client auth is not initialized.' };
+  }
+  try {
+    const result = await signInWithPopup(auth, gmailAlertProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      return { ok: false, error: 'Gmail permission token was not granted.' };
+    }
+    cachedGmailAccessToken = credential.accessToken;
+    cachedGmailConnectedEmail = result.user.email ?? null;
+    return { ok: true, email: result.user.email ?? undefined };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unable to connect Gmail alert channel.',
+    };
+  }
+}
+
+export function disconnectAdminGmailAlerts(): void {
+  cachedGmailAccessToken = null;
+  cachedGmailConnectedEmail = null;
+}
+
+export async function sendAdminAlertViaGmail(params: {
+  toEmail: string;
+  subject: string;
+  bodyText: string;
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  if (!cachedGmailAccessToken) {
+    return { ok: false, error: 'Connect Gmail first to send admin email alerts.' };
+  }
+  const cleanTo = params.toEmail.replace(/[\r\n]/g, '').trim();
+  const cleanSubj = params.subject.replace(/[\r\n]/g, ' ').trim();
+  const mime = [
+    `To: ${cleanTo}`,
+    `Subject: ${cleanSubj}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'MIME-Version: 1.0',
+    '',
+    params.bodyText,
+  ].join('\r\n');
+
+  const bytes = new TextEncoder().encode(mime);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const raw = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  try {
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cachedGmailAccessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw }),
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        cachedGmailAccessToken = null;
+      }
+      const errBody = await res.json().catch(() => ({}));
+      const msg = (errBody as { error?: { message?: string } })?.error?.message;
+      return { ok: false, error: msg ?? `Gmail API returned ${res.status}.` };
+    }
+    const data = (await res.json()) as { id?: string };
+    return { ok: true, messageId: data.id };
+  } catch {
+    return { ok: false, error: 'Network error communicating with Gmail API.' };
+  }
+}
+
 

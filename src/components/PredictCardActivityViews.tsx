@@ -364,9 +364,9 @@ export function PredictMarketsView({
 }
 
 // ---------------------------------------------------------------------------
-// 2. AUREX SOVEREIGN METAL CARD VIEW
+// 2. NUVRA SOVEREIGN METAL CARD VIEW
 // ---------------------------------------------------------------------------
-interface AurexCardViewProps {
+interface NuvraCardViewProps {
   cashBalance: number;
   exchangeFeatures: ExchangeFeaturesState | null;
   onToggleFreeze: (frozen: boolean) => Promise<boolean>;
@@ -378,14 +378,14 @@ interface AurexCardViewProps {
   onLookupBin?: (bin: string) => Promise<BinLookupResult | null>;
 }
 
-export function AurexCardView({
+export function NuvraCardView({
   cashBalance,
   exchangeFeatures,
   onToggleFreeze,
   onUpdateConfig,
   onSpend,
   onLookupBin,
-}: AurexCardViewProps) {
+}: NuvraCardViewProps) {
   const card = exchangeFeatures?.cardProfile;
   const [merchant, setMerchant] = useState('Cloud Compute Terminal');
   const [category, setCategory] = useState('Infrastructure');
@@ -407,7 +407,7 @@ export function AurexCardView({
   if (!card) {
     return (
       <div className="bg-[#090A0D] border border-[#24262C] rounded-2xl p-6 text-xs text-[#8B919E]">
-        Loading Aurex Sovereign Card telemetry…
+        Loading Nuvra Sovereign Card telemetry…
       </div>
     );
   }
@@ -426,7 +426,7 @@ export function AurexCardView({
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono font-bold uppercase tracking-widest text-[#F59E0B]">
-                AUREX · {card.tier}
+                NUVRA · {card.tier}
               </span>
               <span
                 className={`text-[11px] font-mono font-semibold ${
@@ -766,7 +766,7 @@ export function ExchangeActivityView({
 
   const exportCsv = () => {
     downloadCsv(
-      `aurex-activity-${Date.now()}.csv`,
+      `nuvra-activity-${Date.now()}.csv`,
       filtered.map((r) => ({
         Time: new Date(r.timestamp).toISOString(),
         Category: r.kind,

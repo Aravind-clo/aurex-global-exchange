@@ -385,7 +385,7 @@ export function executePlatformSkill(
       { label: 'Global Coverage', value: `${ctx.instruments.length} Markets` },
     ],
     recommendation:
-      'Use "Install App" in the header to run Aurex Exchange as a standalone native window on Android, iPhone/iPad, Windows, or MacBook.',
+      'Use "Install App" in the header to run Nuvra Exchange as a standalone native window on Android, iPhone/iPad, Windows, or MacBook.',
     executedAt: now,
   };
 }

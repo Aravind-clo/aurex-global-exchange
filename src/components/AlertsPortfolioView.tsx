@@ -79,7 +79,7 @@ export function AlertsPortfolioView({
 
   const handleExportBlotter = () => {
     downloadCsv(
-      `aurex-blotter-${new Date().toISOString().slice(0, 10)}.csv`,
+      `nuvra-blotter-${new Date().toISOString().slice(0, 10)}.csv`,
       orders.map((o) => ({
         OrderID: o.id,
         Time: new Date(o.createdAt).toISOString(),

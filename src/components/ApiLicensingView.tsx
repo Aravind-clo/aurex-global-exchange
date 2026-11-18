@@ -264,7 +264,7 @@ export function ApiLicensingView({
 
           <pre className="p-3.5 rounded-md bg-slate-950 text-slate-200 font-mono text-[11px] leading-relaxed overflow-auto max-h-72 border border-slate-800">
             {testResponse ??
-              `// Click Execute to query live quote, ML 15m prediction,\n// L2 top-of-book imbalance, and detected patterns\n// directly from the Aurex API engine.`}
+              `// Click Execute to query live quote, ML 15m prediction,\n// L2 top-of-book imbalance, and detected patterns\n// directly from the Nuvra API engine.`}
           </pre>
         </div>
       </div>

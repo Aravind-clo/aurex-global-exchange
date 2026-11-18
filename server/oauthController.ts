@@ -77,7 +77,7 @@ export function createOAuthControllerRouter(deps: OAuthControllerDeps): express.
     const githubPrivateServer = await probePrivateGitHubServer(false);
 
     res.json({
-      controller: 'Aurex OAuth 2.0 Pre-Flight & Callback Controller',
+      controller: 'Nuvra OAuth 2.0 Pre-Flight & Callback Controller',
       activeBaseUrl: urls.activeBaseUrl,
       sessionCookieName: SESSION_COOKIE_NAME,
       bearerFallbackEnabled: true,
@@ -178,7 +178,7 @@ export function createOAuthControllerRouter(deps: OAuthControllerDeps): express.
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(`<!DOCTYPE html>
 <html>
-  <head><title>Aurex Global Exchange Sign-In</title></head>
+  <head><title>Nuvra Global Exchange Sign-In</title></head>
   <body style="font-family:system-ui,-apple-system,sans-serif;background:#0B0E11;color:#EAECEF;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
     <div style="max-width:440px;padding:24px;border:1px solid #2B3139;border-radius:10px;background:#181A20;text-align:center;">
       <h2 style="margin:0 0 8px;font-size:16px;">${heading}</h2>
@@ -240,7 +240,7 @@ export function createOAuthControllerRouter(deps: OAuthControllerDeps): express.
         renderPopupResult(
           { type: 'OAUTH_MFA_REQUIRED', mfaChallenge: result.mfaChallenge },
           '2nd-Factor MFA Required',
-          'Complete your 2nd-factor verification in the Aurex Global Exchange window.'
+          'Complete your 2nd-factor verification in the Nuvra Global Exchange window.'
         );
         return;
       }
@@ -250,7 +250,7 @@ export function createOAuthControllerRouter(deps: OAuthControllerDeps): express.
       renderPopupResult(
         { type: 'OAUTH_AUTH_SUCCESS', provider, token: result.token },
         'Authentication Verified',
-        'Signed in cleanly. Returning to Aurex Global Exchange...'
+        'Signed in cleanly. Returning to Nuvra Global Exchange...'
       );
     } catch {
       renderPopupResult(
