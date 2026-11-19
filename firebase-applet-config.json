@@ -1,8 +1,9 @@
 {
   "projectId": "root-deployment-wflln",
   "appId": "1:636952177003:web:93bc2071738a84fcaec42e",
-  "apiKey": "AIzaSyBetaZrR-Ot2Ag-gY5J-ewSgvy-rR0JkaU",
+  "apiKey": "",
   "authDomain": "root-deployment-wflln.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-meridianmarkets-55c166ea-2f87-4b6d-a233-a1f7fabc4463",
   "storageBucket": "root-deployment-wflln.firebasestorage.app",
   "messagingSenderId": "636952177003",
   "measurementId": "",

@@ -144,6 +144,7 @@ import {
   createSecurityFirewallMiddleware,
   extractRawClientIp,
   getDdosTelemetry,
+  injectCspNonceIntoHtml,
   issueStepUpChallenge,
   maskClientIp,
   sanitizePlainText,
@@ -2353,6 +2354,72 @@ app.post('/api/v1/wallet/withdraw', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Guarded withdrawal failed.' });
   }
+});
+
+// --- Secure Server-Side Firebase Runtime Bootstrap Endpoint ---
+app.get('/api/v1/firebase/runtime-config', (req, res) => {
+  const isValidGoogleWebApiKey = (val: string): boolean => /^AIza[0-9A-Za-z_-]{20,}$/.test(val.trim());
+  let fileCfg: Record<string, string | undefined> = {};
+  try {
+    const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(cfgPath)) {
+      fileCfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as Record<string, string | undefined>;
+    }
+  } catch {
+    fileCfg = {};
+  }
+
+  const serverEnvKey = (process.env.FIREBASE_WEB_API_KEY ?? '').trim();
+  const viteEnvKey = (process.env.VITE_FIREBASE_API_KEY ?? '').trim();
+  const fileKey = (fileCfg.apiKey ?? '').trim();
+
+  const useServerEnv = isValidGoogleWebApiKey(serverEnvKey);
+  const useViteEnv = !useServerEnv && isValidGoogleWebApiKey(viteEnvKey);
+  const useFileFallback = !useServerEnv && !useViteEnv && isValidGoogleWebApiKey(fileKey);
+
+  const apiKey = useServerEnv ? serverEnvKey : useViteEnv ? viteEnvKey : useFileFallback ? fileKey : '';
+  const apiKeySource = useServerEnv
+    ? 'SERVER_ENV_FIREBASE_WEB_API_KEY'
+    : useViteEnv
+    ? 'ENV_VITE_FIREBASE_API_KEY'
+    : useFileFallback
+    ? 'PROVISIONED_JSON_FALLBACK'
+    : 'UNCONFIGURED';
+
+  const databaseId = (process.env.FIREBASE_DATABASE_ID ?? fileCfg.firestoreDatabaseId ?? '').trim();
+  const isHttps = Boolean(req.secure || req.headers['x-forwarded-proto'] === 'https');
+
+  // Binary bitmask flags representing active runtime security & config invariants
+  const FLAG_API_KEY_VALID = 0b00000001;
+  const FLAG_SERVER_ENV_SOURCE = 0b00000010;
+  const FLAG_NAMED_DB_ACTIVE = 0b00000100;
+  const FLAG_NO_STORE_HEADER = 0b00001000;
+  const FLAG_TLS_TRANSPORT = 0b00010000;
+
+  let bitmask = FLAG_NO_STORE_HEADER;
+  if (apiKey.length > 0) bitmask |= FLAG_API_KEY_VALID;
+  if (useServerEnv || useViteEnv) bitmask |= FLAG_SERVER_ENV_SOURCE;
+  if (databaseId.length > 0) bitmask |= FLAG_NAMED_DB_ACTIVE;
+  if (isHttps) bitmask |= FLAG_TLS_TRANSPORT;
+
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.json({
+    config: {
+      projectId: process.env.FIREBASE_PROJECT_ID || fileCfg.projectId || '',
+      appId: process.env.FIREBASE_APP_ID || fileCfg.appId || '',
+      apiKey,
+      authDomain: process.env.FIREBASE_AUTH_DOMAIN || fileCfg.authDomain || '',
+      firestoreDatabaseId: databaseId,
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || fileCfg.storageBucket || '',
+      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || fileCfg.messagingSenderId || '',
+    },
+    meta: {
+      apiKeySource,
+      securityBitmask: bitmask,
+      securityBitmaskBinary: `0b${bitmask.toString(2).padStart(8, '0')}`,
+      cspNonceIssued: Boolean(res.locals.cspNonce),
+    },
+  });
 });
 
 // --- vibe-security-skill Live Runtime Security Auditor & Gemini 4 Hydrogen Analyzer ---
@@ -6117,12 +6184,40 @@ async function bootstrap() {
         next();
       }
     });
+    app.get('*', async (req, res, next) => {
+      const isHtmlNav =
+        req.path === '/' ||
+        req.path === '/index.html' ||
+        (!req.path.startsWith('/api') &&
+          !req.path.startsWith('/ws') &&
+          !req.path.startsWith('/@') &&
+          !req.path.startsWith('/src/') &&
+          !req.path.startsWith('/node_modules/') &&
+          !req.path.startsWith('/assets/') &&
+          !req.path.startsWith('/__') &&
+          !/\.[a-zA-Z0-9]+$/.test(req.path));
+      if (!isHtmlNav) {
+        next();
+        return;
+      }
+      try {
+        const indexPath = path.resolve(__dirname, 'index.html');
+        const rawHtml = fs.readFileSync(indexPath, 'utf8');
+        const transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
+        const nonced = injectCspNonceIntoHtml(transformed, String(res.locals.cspNonce ?? ''));
+        res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(nonced);
+      } catch (err) {
+        next(err);
+      }
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { index: false }));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const rawHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+      const nonced = injectCspNonceIntoHtml(rawHtml, String(res.locals.cspNonce ?? ''));
+      res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(nonced);
     });
   }
 

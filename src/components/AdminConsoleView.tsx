@@ -41,6 +41,7 @@ import type {
 } from '../types/market';
 import { authFetch } from '../hooks/useMarketSocket';
 import { downloadCsv, formatCurrency, formatTimeShort } from '../utils/format';
+import { FirebaseDiagnosticsPanel } from './FirebaseDiagnosticsPanel';
 
 interface AdminConsoleViewProps {
   overview: AdminServerOverview | null;
@@ -721,6 +722,9 @@ export function AdminConsoleView({
           ))}
         </div>
       </div>
+
+      {/* Firebase, Firestore & Gmail OAuth Diagnostics */}
+      <FirebaseDiagnosticsPanel />
         </>
       )}
 

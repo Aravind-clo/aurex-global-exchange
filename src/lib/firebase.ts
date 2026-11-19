@@ -18,15 +18,113 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const resolvedApiKey =
-  (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined)?.trim() ||
-  firebaseConfig.apiKey ||
-  '';
+function isValidGoogleApiKeyFormat(key: string): boolean {
+  return /^AIza[0-9A-Za-z_-]{20,}$/.test(key.trim());
+}
+
+function maskApiKeyPreview(key: string): string {
+  const clean = key.trim();
+  if (!clean) return 'NOT_SET';
+  if (clean.length <= 8) return `${clean.slice(0, 2)}••••`;
+  return `${clean.slice(0, 6)}••••${clean.slice(-4)}`;
+}
+
+const rawEnvApiKey = (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined)?.trim() || '';
+const envKeyValidFormat = rawEnvApiKey.length > 0 && isValidGoogleApiKeyFormat(rawEnvApiKey);
+const envKeyIgnoredAsInvalid = rawEnvApiKey.length > 0 && !envKeyValidFormat;
+const fallbackConfigApiKey = ((firebaseConfig as { apiKey?: string }).apiKey ?? '').trim();
+const configKeyValidFormat = isValidGoogleApiKeyFormat(fallbackConfigApiKey);
+
+const resolvedApiKey = envKeyValidFormat
+  ? rawEnvApiKey
+  : configKeyValidFormat
+  ? fallbackConfigApiKey
+  : '';
+
+const resolvedApiKeySource: 'VITE_FIREBASE_API_KEY' | 'firebase-applet-config.json' | 'NONE' =
+  envKeyValidFormat
+    ? 'VITE_FIREBASE_API_KEY'
+    : configKeyValidFormat
+    ? 'firebase-applet-config.json'
+    : 'NONE';
+
+export interface FirebaseDiagnosticLogEntry {
+  id: string;
+  timestamp: number;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  subsystem: 'CONFIG' | 'FIRESTORE' | 'AUTH' | 'GMAIL_OAUTH';
+  code: string;
+  message: string;
+  hint?: string;
+}
+
+export interface FirebaseDiagnosticsSnapshot {
+  projectId: string;
+  authDomain: string;
+  firestoreDatabaseId: string;
+  usingNamedDatabase: boolean;
+  apiKeySource: 'VITE_FIREBASE_API_KEY' | 'firebase-applet-config.json' | 'NONE';
+  apiKeyFormatValid: boolean;
+  maskedApiKeyPreview: string;
+  envOverrideIgnored: boolean;
+  envOverridePreview: string | null;
+  oAuthClientConfigured: boolean;
+  gmailConnected: boolean;
+  gmailEmail: string | null;
+  connectionStatus: 'UNTESTED' | 'HEALTHY' | 'CONFIG_ERROR' | 'AUTH_REQUIRED' | 'OFFLINE';
+  lastProbeLatencyMs: number | null;
+  lastCheckedAt: number | null;
+  logs: FirebaseDiagnosticLogEntry[];
+}
+
+const firebaseDiagnosticLogs: FirebaseDiagnosticLogEntry[] = [];
+let diagConnectionStatus: FirebaseDiagnosticsSnapshot['connectionStatus'] = 'UNTESTED';
+let diagLastLatencyMs: number | null = null;
+let diagLastCheckedAt: number | null = null;
+
+function pushFirebaseDiagLog(entry: Omit<FirebaseDiagnosticLogEntry, 'id' | 'timestamp'>): void {
+  firebaseDiagnosticLogs.unshift({
+    ...entry,
+    id: `fb-diag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: Date.now(),
+  });
+  if (firebaseDiagnosticLogs.length > 40) {
+    firebaseDiagnosticLogs.length = 40;
+  }
+}
+
+if (envKeyIgnoredAsInvalid) {
+  pushFirebaseDiagLog({
+    level: 'WARN',
+    subsystem: 'CONFIG',
+    code: 'INVALID_ENV_API_KEY_IGNORED',
+    message: `Runtime VITE_FIREBASE_API_KEY (${maskApiKeyPreview(rawEnvApiKey)}) does not match Google AIza... format and was rejected.`,
+    hint: 'Set VITE_FIREBASE_API_KEY in your .env or runtime Secrets Manager to a valid AIza... Web API key restricted by HTTP referrer.',
+  });
+} else if (!resolvedApiKey) {
+  pushFirebaseDiagLog({
+    level: 'WARN',
+    subsystem: 'CONFIG',
+    code: 'MISSING_VITE_FIREBASE_API_KEY',
+    message: 'VITE_FIREBASE_API_KEY is not set; hardcoded apiKey was removed from firebase-applet-config.json.',
+    hint: 'Provide a referrer-restricted AIza... Firebase Web API key via VITE_FIREBASE_API_KEY in .env or deployment secrets.',
+  });
+}
+
+const optionalDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId?.trim();
+if (!optionalDatabaseId) {
+  pushFirebaseDiagLog({
+    level: 'WARN',
+    subsystem: 'FIRESTORE',
+    code: 'DEFAULT_DATABASE_FALLBACK',
+    message: "No 'firestoreDatabaseId' configured; Firestore SDK will attempt '(default)' database.",
+    hint: "Provision Firestore or set 'firestoreDatabaseId' in firebase-applet-config.json to match your Cloud Firestore database ID.",
+  });
+}
 
 const app: FirebaseApp | null = resolvedApiKey
   ? initializeApp({ ...firebaseConfig, apiKey: resolvedApiKey })
   : null;
-const optionalDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
 export const db: Firestore | null = app
   ? optionalDatabaseId
     ? getFirestore(app, optionalDatabaseId)
@@ -100,19 +198,194 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+  pushFirebaseDiagLog({
+    level: 'ERROR',
+    subsystem: 'FIRESTORE',
+    code: 'FIRESTORE_OPERATION_FAILED',
+    message: `${operationType.toUpperCase()} ${path ?? '(unknown)'}: ${errInfo.error}`,
+  });
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-async function testConnection() {
-  if (!db) return;
+export function getFirebaseDiagnostics(): FirebaseDiagnosticsSnapshot {
+  return {
+    projectId: firebaseConfig.projectId || 'UNSET',
+    authDomain: firebaseConfig.authDomain || 'UNSET',
+    firestoreDatabaseId: optionalDatabaseId || '(default)',
+    usingNamedDatabase: Boolean(optionalDatabaseId),
+    apiKeySource: resolvedApiKeySource,
+    apiKeyFormatValid: isValidGoogleApiKeyFormat(resolvedApiKey),
+    maskedApiKeyPreview: maskApiKeyPreview(resolvedApiKey),
+    envOverrideIgnored: envKeyIgnoredAsInvalid,
+    envOverridePreview: envKeyIgnoredAsInvalid ? maskApiKeyPreview(rawEnvApiKey) : null,
+    oAuthClientConfigured: Boolean((firebaseConfig as { oAuthClientId?: string }).oAuthClientId),
+    gmailConnected: Boolean(cachedGmailAccessToken),
+    gmailEmail: cachedGmailConnectedEmail,
+    connectionStatus: diagConnectionStatus,
+    lastProbeLatencyMs: diagLastLatencyMs,
+    lastCheckedAt: diagLastCheckedAt,
+    logs: [...firebaseDiagnosticLogs],
+  };
+}
+
+export function clearFirebaseDiagnosticLogs(): void {
+  firebaseDiagnosticLogs.length = 0;
+}
+
+export const FIREBASE_RUNTIME_FLAGS = {
+  API_KEY_VALID: 0b00000001,
+  ENV_OVERRIDE_USED: 0b00000010,
+  NAMED_FIRESTORE_DB: 0b00000100,
+  OAUTH_CLIENT_SET: 0b00001000,
+  ENV_INVALID_IGNORED: 0b00010000,
+} as const;
+
+export function getFirebaseConfigBitmask(): { value: number; binary: string } {
+  let mask = 0;
+  if (isValidGoogleApiKeyFormat(resolvedApiKey)) mask |= FIREBASE_RUNTIME_FLAGS.API_KEY_VALID;
+  if (resolvedApiKeySource === 'VITE_FIREBASE_API_KEY') mask |= FIREBASE_RUNTIME_FLAGS.ENV_OVERRIDE_USED;
+  if (Boolean(optionalDatabaseId)) mask |= FIREBASE_RUNTIME_FLAGS.NAMED_FIRESTORE_DB;
+  if (Boolean((firebaseConfig as { oAuthClientId?: string }).oAuthClientId)) {
+    mask |= FIREBASE_RUNTIME_FLAGS.OAUTH_CLIENT_SET;
+  }
+  if (envKeyIgnoredAsInvalid) mask |= FIREBASE_RUNTIME_FLAGS.ENV_INVALID_IGNORED;
+  return {
+    value: mask,
+    binary: `0b${mask.toString(2).padStart(8, '0')}`,
+  };
+}
+
+export async function fetchRuntimeFirebaseConfig(): Promise<{
+  config: Record<string, string>;
+  meta?: { apiKeySource: string; securityBitmask: number; securityBitmaskBinary: string };
+} | null> {
+  try {
+    const res = await fetch('/api/v1/firebase/runtime-config', { cache: 'no-store' });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      config: Record<string, string>;
+      meta?: { apiKeySource: string; securityBitmask: number; securityBitmaskBinary: string };
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function runFirebaseDiagnosticsProbe(): Promise<FirebaseDiagnosticsSnapshot> {
+  const t0 = performance.now();
+  diagLastCheckedAt = Date.now();
+
+  // 1. Validate Identity Toolkit API Key reachability
+  if (resolvedApiKey && isValidGoogleApiKeyFormat(resolvedApiKey)) {
+    try {
+      const idpRes = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(resolvedApiKey)}`
+      );
+      if (idpRes.ok) {
+        pushFirebaseDiagLog({
+          level: 'INFO',
+          subsystem: 'AUTH',
+          code: 'IDENTITY_TOOLKIT_OK',
+          message: `Firebase Auth API key (${maskApiKeyPreview(resolvedApiKey)}) accepted by Identity Toolkit for project ${firebaseConfig.projectId}.`,
+        });
+      } else {
+        const bodyText = await idpRes.text().catch(() => '');
+        pushFirebaseDiagLog({
+          level: 'ERROR',
+          subsystem: 'AUTH',
+          code: `IDENTITY_TOOLKIT_${idpRes.status}`,
+          message: `Identity Toolkit rejected API key with HTTP ${idpRes.status}. ${bodyText.slice(0, 140)}`,
+          hint: 'Verify the API key in Google Cloud Console has Identity Toolkit API enabled and allows this domain referrer.',
+        });
+      }
+    } catch (err) {
+      pushFirebaseDiagLog({
+        level: 'WARN',
+        subsystem: 'AUTH',
+        code: 'IDENTITY_TOOLKIT_NETWORK_ERROR',
+        message: err instanceof Error ? err.message : 'Unable to reach Identity Toolkit endpoint.',
+      });
+    }
+  } else {
+    pushFirebaseDiagLog({
+      level: 'ERROR',
+      subsystem: 'CONFIG',
+      code: 'MISSING_OR_INVALID_API_KEY',
+      message: 'No valid AIza... Firebase Web API key is active.',
+      hint: 'Set VITE_FIREBASE_API_KEY or provision Firebase config via AI Studio.',
+    });
+  }
+
+  // 2. Test Firestore server connection against configured databaseId
+  if (!db) {
+    diagConnectionStatus = 'CONFIG_ERROR';
+    pushFirebaseDiagLog({
+      level: 'ERROR',
+      subsystem: 'FIRESTORE',
+      code: 'FIRESTORE_NOT_INITIALIZED',
+      message: 'Firestore client instance is null because Firebase app did not initialize.',
+    });
+    return getFirebaseDiagnostics();
+  }
+
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    diagLastLatencyMs = Math.round(performance.now() - t0);
+    diagConnectionStatus = 'HEALTHY';
+    pushFirebaseDiagLog({
+      level: 'INFO',
+      subsystem: 'FIRESTORE',
+      code: 'FIRESTORE_CONNECTED',
+      message: `Connected to Firestore database '${optionalDatabaseId || '(default)'}' in ${diagLastLatencyMs}ms.`,
+    });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
+    diagLastLatencyMs = Math.round(performance.now() - t0);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('Database') && msg.includes('not found')) {
+      diagConnectionStatus = 'CONFIG_ERROR';
+      pushFirebaseDiagLog({
+        level: 'ERROR',
+        subsystem: 'FIRESTORE',
+        code: 'FIRESTORE_DB_NOT_FOUND',
+        message: msg,
+        hint: "Ensure getFirestore(app, firebaseConfig.firestoreDatabaseId) uses the provisioned Enterprise database ID rather than '(default)'.",
+      });
+    } else if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient permissions')) {
+      // Expected when unauthenticated against fail-closed default-deny firestore.rules; proves database endpoint IS reachable!
+      diagConnectionStatus = 'AUTH_REQUIRED';
+      pushFirebaseDiagLog({
+        level: 'INFO',
+        subsystem: 'FIRESTORE',
+        code: 'FIRESTORE_REACHABLE_RULES_ACTIVE',
+        message: `Firestore database '${optionalDatabaseId || '(default)'}' reachable (${diagLastLatencyMs}ms); fail-closed security rules enforced.`,
+      });
+    } else if (msg.includes('the client is offline')) {
+      diagConnectionStatus = 'OFFLINE';
+      pushFirebaseDiagLog({
+        level: 'ERROR',
+        subsystem: 'FIRESTORE',
+        code: 'CLIENT_OFFLINE',
+        message: 'Firestore client reported offline or unreachable backend.',
+        hint: 'Check CSP connect-src (firestore.googleapis.com), projectId, and firestoreDatabaseId.',
+      });
       console.error('Please check your Firebase configuration.');
+    } else {
+      diagConnectionStatus = 'CONFIG_ERROR';
+      pushFirebaseDiagLog({
+        level: 'WARN',
+        subsystem: 'FIRESTORE',
+        code: 'FIRESTORE_PROBE_ERROR',
+        message: msg,
+      });
     }
   }
+
+  return getFirebaseDiagnostics();
+}
+
+async function testConnection() {
+  await runFirebaseDiagnosticsProbe();
 }
 
 void testConnection();
@@ -501,21 +774,55 @@ export async function connectAdminGmailAlerts(): Promise<{
   error?: string;
 }> {
   if (!auth) {
+    pushFirebaseDiagLog({
+      level: 'ERROR',
+      subsystem: 'GMAIL_OAUTH',
+      code: 'AUTH_NOT_INITIALIZED',
+      message: 'Firebase Auth is not initialized (missing valid Web API key).',
+    });
     return { ok: false, error: 'Firebase client auth is not initialized.' };
   }
   try {
     const result = await signInWithPopup(auth, gmailAlertProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
+      pushFirebaseDiagLog({
+        level: 'WARN',
+        subsystem: 'GMAIL_OAUTH',
+        code: 'MISSING_GMAIL_ACCESS_TOKEN',
+        message: 'Google Sign-In completed without a gmail.send OAuth access token.',
+      });
       return { ok: false, error: 'Gmail permission token was not granted.' };
     }
     cachedGmailAccessToken = credential.accessToken;
     cachedGmailConnectedEmail = result.user.email ?? null;
+    pushFirebaseDiagLog({
+      level: 'INFO',
+      subsystem: 'GMAIL_OAUTH',
+      code: 'GMAIL_CHANNEL_CONNECTED',
+      message: `Connected Gmail alert channel for ${result.user.email ?? 'Google Account'} (in-memory token).`,
+    });
     return { ok: true, email: result.user.email ?? undefined };
   } catch (error) {
+    const rawMsg = error instanceof Error ? error.message : 'Unable to connect Gmail alert channel.';
+    let hint = 'Verify browser popups are allowed and retry connecting your Google Account.';
+    if (rawMsg.includes('api-key-not-valid')) {
+      hint = 'Ensure VITE_FIREBASE_API_KEY (if set) is a valid AIza... key for project root-deployment-wflln.';
+    } else if (rawMsg.includes('unauthorized-domain')) {
+      hint = 'Add the active origin hostname under Firebase Console -> Authentication -> Settings -> Authorized domains.';
+    } else if (rawMsg.includes('popup-closed-by-user') || rawMsg.includes('popup-blocked')) {
+      hint = 'Allow popups for this site and complete the Google consent dialog.';
+    }
+    pushFirebaseDiagLog({
+      level: 'ERROR',
+      subsystem: 'GMAIL_OAUTH',
+      code: 'GMAIL_OAUTH_FAILED',
+      message: rawMsg,
+      hint,
+    });
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Unable to connect Gmail alert channel.',
+      error: `${rawMsg} (${hint})`,
     };
   }
 }

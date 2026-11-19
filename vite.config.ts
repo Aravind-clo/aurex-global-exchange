@@ -13,8 +13,8 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.png', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
-          name: 'Aurex Global Exchange',
-          short_name: 'Aurex',
+          name: 'Nuvra Exchange',
+          short_name: 'Nuvra',
           description: 'Global multi-market execution terminal for Crypto, India NSE/BSE, US, Europe, Asia Equities & Forex.',
           theme_color: '#0B0E11',
           background_color: '#0B0E11',
@@ -53,7 +53,7 @@ export default defineConfig(() => {
               urlPattern: /^\/api\/v1\/market\/snapshot$/i,
               handler: 'NetworkFirst',
               options: {
-                cacheName: 'meridian-market-snapshot',
+                cacheName: 'nuvra-market-snapshot',
                 expiration: { maxEntries: 8, maxAgeSeconds: 120 },
               },
             },

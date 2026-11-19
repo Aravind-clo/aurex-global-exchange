@@ -327,21 +327,62 @@ const SENSITIVE_PATH_PROBE_REGEX =
 const SENSITIVE_ROOT_PATH_REGEX =
   /^\/(data|server)(\/|$)|^\/(server\.ts|server\.js|vite\.config\.ts|package\.json|package-lock\.json|tsconfig\.json)$/i;
 
+const SENSITIVE_NO_STORE_API_REGEX =
+  /^\/api\/v1\/(auth|admin|vault|custody|limits|grants|verifications|keys|security|notifications|firebase)\b/i;
+
+export function injectCspNonceIntoHtml(html: string, nonce: string): string {
+  if (!nonce) return html;
+  return html.replace(/<script\b(?![^>]*\bnonce=)([^>]*)>/gi, `<script nonce="${nonce}"$1>`);
+}
+
 export function createSecurityFirewallMiddleware(ctx: FirewallContext) {
   return (req: Request, res: Response, next: NextFunction) => {
-    // 1. Strict HTTP Security Headers (preserving AI Studio preview iframe & OAuth popup opener compatibility)
+    // 1. Strict HTTP Security Headers & Nonce-Based Content-Security-Policy (preserving AI Studio preview iframe & OAuth popups)
+    const cspNonce = crypto.randomBytes(16).toString('base64');
+    res.locals.cspNonce = cspNonce;
+    const isHttps = Boolean(req.secure || req.headers['x-forwarded-proto'] === 'https');
+
+    const cspDirectives = [
+      "default-src 'self'",
+      `script-src 'self' 'nonce-${cspNonce}' https://apis.google.com https://accounts.google.com https://www.gstatic.com`,
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob: https:",
+      "worker-src 'self' blob:",
+      "child-src 'self' blob: https://accounts.google.com https://*.firebaseapp.com",
+      "connect-src 'self' ws: wss: https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.coingecko.com https://api.frankfurter.app https://api.coinbase.com https://api.exchange.coinbase.com https://query1.finance.yahoo.com https://api.github.com https://lookup.binlist.net https://ipwho.is",
+      "frame-src 'self' https://accounts.google.com https://apis.google.com https://*.firebaseapp.com https://*.google.com",
+      "frame-ancestors 'self' https://aistudio.google.com https://*.google.com https://*.googleusercontent.com",
+      "form-action 'self'",
+      "manifest-src 'self'",
+      "media-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+    ];
+    if (isHttps) {
+      cspDirectives.push('upgrade-insecure-requests');
+    }
+
+    res.setHeader('Content-Security-Policy', cspDirectives.join('; ') + ';');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+    res.setHeader('Origin-Agent-Cluster', '?1');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'
+    );
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-    res.setHeader(
-      'Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; worker-src 'self' blob:; connect-src 'self' ws: wss: https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.coinbase.com https://api.exchange.coinbase.com https://query1.finance.yahoo.com https://api.github.com; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://*.google.com; object-src 'none'; base-uri 'self';"
-    );
-    if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
-      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Download-Options', 'noopen');
+    if (isHttps) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    }
+    if (SENSITIVE_NO_STORE_API_REGEX.test(req.path)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
     }
 
     // 1B. KeySentinel Sensitive File & Secret Isolation Guard (Blocks ALL non-API & API probes to secret/source paths)

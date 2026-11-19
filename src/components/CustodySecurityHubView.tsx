@@ -51,6 +51,7 @@ import type {
   WithdrawalAllowlistEntry,
 } from '../types/market';
 import { formatCompactNumber, formatCurrency, formatTimeShort } from '../utils/format';
+import { FirebaseDiagnosticsPanel } from './FirebaseDiagnosticsPanel';
 
 type CustodyHubTab =
   | 'deposit'
@@ -2080,6 +2081,8 @@ export function CustodySecurityHubView({
               </div>
             )}
           </div>
+
+          <FirebaseDiagnosticsPanel />
         </div>
       )}
     </div>

@@ -2333,6 +2333,11 @@ export default function App() {
                 {pendingGmailConfirm.message}
               </div>
             </div>
+            {!gmailStatus.connected && (
+              <div className="p-2.5 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/40 text-[11px] text-[#B45309] dark:text-[#FDE68A]">
+                Gmail isn&apos;t connected in this session yet. Confirming below will prompt Google permission (<span className="font-mono">gmail.send</span>) and then deliver this alert.
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -2346,13 +2351,24 @@ export default function App() {
                 disabled={gmailSending}
                 onClick={async () => {
                   setGmailSending(true);
+                  if (!gmailStatus.connected) {
+                    const conn = await connectAdminGmail();
+                    if (!conn.ok) {
+                      setGmailSending(false);
+                      return;
+                    }
+                  }
                   await dispatchAdminGmailAlert(pendingGmailConfirm, FOUNDER_EMAIL);
                   setGmailSending(false);
                   setPendingGmailConfirm(null);
                 }}
                 className="px-4 py-2 rounded-lg bg-[#F59E0B] hover:bg-[#F0B90B] text-[#090A0C] font-semibold"
               >
-                {gmailSending ? 'Sending…' : 'Confirm & Send Gmail'}
+                {gmailSending
+                  ? 'Sending…'
+                  : gmailStatus.connected
+                  ? 'Confirm & Send Gmail'
+                  : 'Connect Gmail & Send'}
               </button>
             </div>
           </div>

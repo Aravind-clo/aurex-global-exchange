@@ -171,27 +171,35 @@ export function runVibeSecurityAudit(runtime: {
 
   // 6. Security Headers & Encryption
   const headersConfigured = [
+    'Content-Security-Policy (Nonce + frame-ancestors + object-src none)',
     'X-Content-Type-Options: nosniff',
     'Cross-Origin-Opener-Policy: same-origin-allow-popups',
+    'Cross-Origin-Resource-Policy: same-site',
+    'Origin-Agent-Cluster: ?1',
     'Referrer-Policy: strict-origin-when-cross-origin',
-    'Permissions-Policy: camera=(), microphone=(), geolocation=()',
-    'Content-Security-Policy',
+    'Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    'X-Download-Options: noopen',
+    'X-Permitted-Cross-Domain-Policies: none',
+    'Cache-Control: no-store (sensitive endpoints)',
     'X-Nuvra-Encrypted-Channel: X25519-AES-256-GCM',
   ];
   const hasHeaders =
     firewallSrc.includes('X-Content-Type-Options') &&
     firewallSrc.includes('Content-Security-Policy') &&
+    firewallSrc.includes('Cross-Origin-Resource-Policy') &&
+    firewallSrc.includes('frame-ancestors') &&
+    !firewallSrc.includes("'unsafe-eval'") &&
     serverSrc.includes("app.disable('x-powered-by')");
   checks.push({
     id: 'vs-hdr-1',
     domain: 'Security Headers & Encryption',
-    ruleTitle: 'Hardened HTTP security headers, CSP & X25519 + AES-256-GCM transport sealing',
+    ruleTitle: 'Strict nonce CSP (zero unsafe-eval), anti-clickjacking & transport sealing',
     status: hasHeaders ? 'PASS' : 'WARN',
     severity: 'HIGH',
     evidence: hasHeaders
-      ? `All ${headersConfigured.length} HTTP security headers enforced and X-Powered-By disabled (${fs.existsSync(path.join(root, 'server', 'encryptedNetwork.ts')) ? 'X25519 + HKDF-SHA256 active' : 'channel active'}).`
-      : 'One or more security headers missing.',
-    remediation: 'Apply CSP, nosniff, Referrer-Policy, and HSTS on all responses.',
+      ? `All ${headersConfigured.length} HTTP security headers enforced (nonce-gated scripts, zero unsafe-eval) and X-Powered-By disabled (${fs.existsSync(path.join(root, 'server', 'encryptedNetwork.ts')) ? 'X25519 + HKDF-SHA256 active' : 'channel active'}).`
+      : 'One or more strict CSP or HTTP security headers missing.',
+    remediation: 'Apply per-request nonce CSP, frame-ancestors, nosniff, CORP/COOP, Referrer-Policy, and HSTS on all responses.',
   });
 
   const passedCount = checks.filter((c) => c.status === 'PASS').length;
